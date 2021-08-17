@@ -39,15 +39,15 @@ typedef enum {
     Event_LT = 1 << 3,//水平触发
 } Poll_Event;
 
-typedef function<void(int event)> PollEventCB;
-typedef function<void(bool success)> PollDelCB;
-typedef TaskCancelableImp<uint64_t(void)> DelayTask;
+using PollEventCB = function<void(int event)>;
+using PollDelCB = function<void(bool success)>;
+using DelayTask = TaskCancelableImp<uint64_t(void)>;
 
-class EventPoller : public TaskExecutor , public std::enable_shared_from_this<EventPoller> {
+class EventPoller : public TaskExecutor, public AnyStorage, public std::enable_shared_from_this<EventPoller> {
 public:
-    typedef std::shared_ptr<EventPoller> Ptr;
-    friend class EventPollerPool;
-    friend class WorkThreadPool;
+    using Ptr = std::shared_ptr<EventPoller>;
+    friend class TaskExecutorGetterImp;
+
     ~EventPoller();
 
     /**
@@ -121,6 +121,11 @@ public:
      * 获取当前线程下所有socket共享的读缓存
      */
     BufferRaw::Ptr getSharedBuffer();
+
+    /**
+     * 获取poller线程id
+     */
+    const thread::id& getThreadId() const;
 
 private:
     /**
@@ -210,7 +215,7 @@ private:
 #else
     //select相关
     struct Poll_Record {
-        typedef std::shared_ptr<Poll_Record> Ptr;
+        using Ptr = std::shared_ptr<Poll_Record>;
         int event;
         int attach;
         PollEventCB callBack;
@@ -222,10 +227,9 @@ private:
     multimap<uint64_t, DelayTask::Ptr> _delay_task_map;
 };
 
-
 class EventPollerPool : public std::enable_shared_from_this<EventPollerPool>, public TaskExecutorGetterImp {
 public:
-    typedef std::shared_ptr<EventPollerPool> Ptr;
+    using Ptr = std::shared_ptr<EventPollerPool>;
     ~EventPollerPool(){};
 
     /**
@@ -239,7 +243,7 @@ public:
      * 在不调用此方法的情况下，默认创建thread::hardware_concurrency()个EventPoller实例
      * @param size  EventPoller个数，如果为0则为thread::hardware_concurrency()
      */
-    static void setPoolSize(int size = 0);
+    static void setPoolSize(size_t size = 0);
 
     /**
      * 获取第一个实例

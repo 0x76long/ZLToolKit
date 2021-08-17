@@ -67,17 +67,24 @@ int sendmsg(int fd, const struct msghdr *msg, int flags) {
 }
 #endif // defined(_WIN32)
 
+static BufferSock *getBufferSockPtr(std::pair<Buffer::Ptr, bool> &pr) {
+    if (!pr.second) {
+        return nullptr;
+    }
+    return static_cast<BufferSock *>(pr.first.get());
+}
+
 ssize_t BufferList::send_l(int fd, int flags,bool udp) {
     ssize_t n;
     do {
         struct msghdr msg;
         if (!udp) {
-            msg.msg_name = NULL;
+            msg.msg_name = nullptr;
             msg.msg_namelen = 0;
         } else {
-            auto &buffer = _pkt_list.front();
-            msg.msg_name = buffer->_addr;
-            msg.msg_namelen = buffer->_addr_len;
+            auto ptr = getBufferSockPtr(_pkt_list.front());
+            msg.msg_name = ptr ? ptr->_addr : nullptr;
+            msg.msg_namelen = ptr ? ptr->_addr_len : 0;
         }
 
         msg.msg_iov = &(_iovec[_iovec_off]);
@@ -92,13 +99,20 @@ ssize_t BufferList::send_l(int fd, int flags,bool udp) {
         n = sendmsg(fd, &msg, flags);
     } while (-1 == n && UV_EINTR == get_uv_error(true));
 
-    if (n >= (ssize_t) _remainSize) {
+    if (n >= (ssize_t) _remain_size) {
         //全部写完了
         _iovec_off = _iovec.size();
-        _remainSize = 0;
-        _pkt_list.for_each([](BufferSock::Ptr &buffer){
-            buffer->onSendSuccess();
-        });
+        _remain_size = 0;
+        if (!_cb) {
+            _pkt_list.clear();
+            return n;
+        }
+
+        //全部发送成功回调
+        while (!_pkt_list.empty()) {
+            _cb(_pkt_list.front().first, true);
+            _pkt_list.pop_front();
+        }
         return n;
     }
 
@@ -113,10 +127,10 @@ ssize_t BufferList::send_l(int fd, int flags,bool udp) {
 }
 
 ssize_t BufferList::send(int fd, int flags, bool udp) {
-    auto remainSize = _remainSize;
-    while (_remainSize && send_l(fd, flags, udp) != -1);
+    auto remainSize = _remain_size;
+    while (_remain_size && send_l(fd, flags, udp) != -1);
 
-    ssize_t sent = remainSize - _remainSize;
+    ssize_t sent = remainSize - _remain_size;
     if (sent > 0) {
         //部分或全部发送成功
         return sent;
@@ -126,7 +140,7 @@ ssize_t BufferList::send(int fd, int flags, bool udp) {
 }
 
 void BufferList::reOffset(size_t n) {
-    _remainSize -= n;
+    _remain_size -= n;
     size_t offset = 0;
     auto last_off = _iovec_off;
     for (auto i = _iovec_off; i != _iovec.size(); ++i) {
@@ -147,24 +161,37 @@ void BufferList::reOffset(size_t n) {
 
     //删除已经发送的数据，节省内存
     for (auto i = last_off; i < _iovec_off; ++i) {
-        auto &front = _pkt_list.front();
-        front->onSendSuccess();
+        if (_cb) {
+            //发送成功回调
+            _cb(_pkt_list.front().first, true);
+        }
         _pkt_list.pop_front();
     }
 }
 
-BufferList::BufferList(List<BufferSock::Ptr> &list) : _iovec(list.size()) {
+BufferList::BufferList(List<std::pair<Buffer::Ptr, bool> > &list, SendResult cb) : _iovec(list.size()), _cb(std::move(cb)) {
     _pkt_list.swap(list);
     auto it = _iovec.begin();
-    _pkt_list.for_each([&](BufferSock::Ptr &buffer) {
-        it->iov_base = buffer->data();
-        it->iov_len = (decltype(it->iov_len)) buffer->size();
-        _remainSize += it->iov_len;
+    _pkt_list.for_each([&](std::pair<Buffer::Ptr, bool> &pr) {
+        it->iov_base = pr.first->data();
+        it->iov_len = (decltype(it->iov_len)) pr.first->size();
+        _remain_size += it->iov_len;
         ++it;
     });
 }
 
-BufferSock::BufferSock(Buffer::Ptr buffer, struct sockaddr *addr, int addr_len, onResult cb) {
+BufferList::~BufferList() {
+    if (!_cb) {
+        return;
+    }
+    //未发送成功的buffer
+    while (!_pkt_list.empty()) {
+        _cb(_pkt_list.front().first, false);
+        _pkt_list.pop_front();
+    }
+}
+
+BufferSock::BufferSock(Buffer::Ptr buffer, struct sockaddr *addr, int addr_len) {
     if (addr && addr_len) {
         _addr = (struct sockaddr *) malloc(addr_len);
         memcpy(_addr, addr, addr_len);
@@ -172,16 +199,12 @@ BufferSock::BufferSock(Buffer::Ptr buffer, struct sockaddr *addr, int addr_len, 
     }
     assert(buffer);
     _buffer = std::move(buffer);
-    _result = std::move(cb);
 }
 
 BufferSock::~BufferSock(){
     if (_addr) {
         free(_addr);
-    }
-    if (_result) {
-        _result(0);
-        _result = nullptr;
+        _addr = nullptr;
     }
 }
 
@@ -191,17 +214,6 @@ char *BufferSock::data() const {
 
 size_t BufferSock::size() const {
     return _buffer->size();
-}
-
-void BufferSock::onSendSuccess() {
-    if (_result) {
-        _result(size());
-        _result = nullptr;
-    }
-}
-
-void BufferSock::setSendResult(onResult cb){
-    _result = std::move(cb);
 }
 
 }//namespace toolkit

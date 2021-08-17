@@ -28,12 +28,14 @@
 #include "Network/sockutil.h"
 using namespace std;
 
-namespace std {
-    template <typename T> struct is_pointer<shared_ptr<T> > : std::true_type {};
-    template <typename T> struct is_pointer<shared_ptr<T const> > : std::true_type {};
-}
-
 namespace toolkit {
+
+template <typename T> struct is_pointer : public std::false_type {};
+template <typename T> struct is_pointer<shared_ptr<T> > : public std::true_type {};
+template <typename T> struct is_pointer<shared_ptr<T const> > : public std::true_type {};
+template <typename T> struct is_pointer<T*> : public true_type {};
+template <typename T> struct is_pointer<const T*> : public true_type {};
+
 //缓存基类
 class Buffer : public noncopyable {
 public:
@@ -92,13 +94,13 @@ private:
     }
 
     template<typename T>
-    static typename std::enable_if<std::is_pointer<T>::value, const T &>::type
+    static typename std::enable_if<toolkit::is_pointer<T>::value, const T &>::type
     getPointer(const T &data) {
         return data;
     }
 
     template<typename T>
-    static typename std::enable_if<!std::is_pointer<T>::value, const T *>::type
+    static typename std::enable_if<!toolkit::is_pointer<T>::value, const T *>::type
     getPointer(const T &data) {
         return &data;
     }
@@ -466,29 +468,26 @@ class BufferList;
 class BufferSock : public Buffer {
 public:
     using Ptr = std::shared_ptr<BufferSock>;
-    using onResult = function<void(size_t size)>;
     friend class BufferList;
 
-    BufferSock(Buffer::Ptr ptr, struct sockaddr *addr = nullptr, int addr_len = 0, onResult cb = nullptr);
+    BufferSock(Buffer::Ptr ptr, struct sockaddr *addr = nullptr, int addr_len = 0);
     ~BufferSock();
 
     char *data() const override;
     size_t size() const override;
-    void setSendResult(onResult cb);
-    void onSendSuccess();
 
 private:
     int _addr_len = 0;
     struct sockaddr *_addr = nullptr;
     Buffer::Ptr _buffer;
-    onResult _result;
 };
 
 class BufferList : public noncopyable {
 public:
-    typedef std::shared_ptr<BufferList> Ptr;
-    BufferList(List<BufferSock::Ptr> &list);
-    ~BufferList() {}
+    using Ptr = std::shared_ptr<BufferList>;
+    using SendResult = function<void(const Buffer::Ptr &buffer, bool send_success)>;
+    BufferList(List<std::pair<Buffer::Ptr, bool> > &list, SendResult cb = nullptr);
+    ~BufferList();
 
     bool empty();
     size_t count();
@@ -500,9 +499,10 @@ private:
 
 private:
     size_t _iovec_off = 0;
-    size_t _remainSize = 0;
+    size_t _remain_size = 0;
     vector<struct iovec> _iovec;
-    List<BufferSock::Ptr> _pkt_list;
+    List<std::pair<Buffer::Ptr, bool> > _pkt_list;
+    SendResult _cb;
     //对象个数统计
     ObjectStatistic<BufferList> _statistic;
 };

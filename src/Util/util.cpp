@@ -337,6 +337,7 @@ static atomic<uint64_t> s_currentMillisecond_system(getCurrentMicrosecondOrigin(
 
 static inline bool initMillisecondThread() {
     static std::thread s_thread([]() {
+        setThreadName("stamp thread");
         DebugL << "Stamp thread started!";
         uint64_t last = getCurrentMicrosecondOrigin();
         uint64_t now;
@@ -404,6 +405,31 @@ struct tm getLocalTime(time_t sec) {
     return tm;
 }
 
+void setThreadName(const char *name) {
+#if defined(__linux) || defined(__linux__)
+    pthread_setname_np(pthread_self(), name);
+#elif defined(__MACH__) || defined(__APPLE__)
+    pthread_setname_np(name);
+#endif
+}
+
+string getThreadName() {
+#if defined(__linux) || defined(__linux__) || defined(__MACH__) || defined(__APPLE__)
+    string ret;
+    ret.resize(32);
+    auto tid = pthread_self();
+    pthread_getname_np(tid, (char *) ret.data(), ret.size());
+    if (ret[0]) {
+        ret.resize(strlen(ret.data()));
+        return ret;
+    }
+    return to_string((uint64_t) tid);
+#else
+    std::ostringstream ss;
+    ss << std::this_thread::get_id();
+    return ss.str();
+#endif
+}
 
 }  // namespace toolkit
 

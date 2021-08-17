@@ -253,17 +253,19 @@ public:
 //异步IO Socket对象，包括tcp客户端、服务器和udp套接字
 class Socket : public std::enable_shared_from_this<Socket>, public noncopyable, public SockInfo {
 public:
-    typedef std::shared_ptr<Socket> Ptr;
+    using Ptr = std::shared_ptr<Socket>;
     //接收数据回调
-    typedef function<void(const Buffer::Ptr &buf, struct sockaddr *addr, int addr_len)> onReadCB;
+    using onReadCB = function<void(const Buffer::Ptr &buf, struct sockaddr *addr, int addr_len)>;
     //发生错误回调
-    typedef function<void(const SockException &err)> onErrCB;
+    using onErrCB = function<void(const SockException &err)>;
     //tcp监听接收到连接请求
-    typedef function<void(Socket::Ptr &sock, shared_ptr<void> &complete)> onAcceptCB;
+    using onAcceptCB = function<void(Socket::Ptr &sock, shared_ptr<void> &complete)>;
     //socket发送缓存清空事件，返回true代表下次继续监听该事件，否则停止
-    typedef function<bool()> onFlush;
+    using onFlush = function<bool()>;
     //在接收到连接请求前，拦截Socket默认生成方式
-    typedef function<Ptr(const EventPoller::Ptr &poller)> onCreateSocket;
+    using onCreateSocket = function<Ptr(const EventPoller::Ptr &poller)>;
+    //发送buffer成功与否回调
+    using onSendResult = BufferList::SendResult;
 
     /**
      * 构造socket对象，尚未有实质操作
@@ -336,6 +338,12 @@ public:
      */
     virtual void setOnBeforeAccept(onCreateSocket cb);
 
+    /**
+     * 设置发送buffer结果回调
+     * @param cb 回调
+     */
+    virtual void setOnSendResult(onSendResult cb);
+
     ////////////发送数据相关接口////////////
 
     /**
@@ -356,13 +364,9 @@ public:
 
     /**
      * 发送Buffer对象，Socket对象发送数据的统一出口
+     * socket对象发送数据的统一出口
      */
-    ssize_t send(Buffer::Ptr buf, struct sockaddr *addr = nullptr, socklen_t addr_len = 0, bool try_flush = true);
-
-    /**
-     * 发送BufferSock对象，Socket对象发送数据的统一出口
-     */
-    virtual ssize_t send(BufferSock::Ptr buf, bool try_flush = true);
+    virtual ssize_t send(Buffer::Ptr buf, struct sockaddr *addr = nullptr, socklen_t addr_len = 0, bool try_flush = true);
 
     /**
      * 关闭socket且触发onErr回调，onErr回调将在poller线程中进行
@@ -447,7 +451,7 @@ public:
 
 private:
     SockFD::Ptr setPeerSock(int fd);
-    SockFD::Ptr makeSock(int sock,SockNum::SockType type);
+    SockFD::Ptr makeSock(int sock, SockNum::SockType type);
     int onAccept(const SockFD::Ptr &sock, int event) noexcept;
     ssize_t onRead(const SockFD::Ptr &sock, bool is_udp = false) noexcept;
     void onWriteAble(const SockFD::Ptr &sock);
@@ -458,6 +462,7 @@ private:
     bool listen(const SockFD::Ptr &sock);
     bool flushData(const SockFD::Ptr &sock, bool poller_thread);
     bool attachEvent(const SockFD::Ptr &sock, bool is_udp = false);
+    ssize_t send_l(Buffer::Ptr buf, bool is_buf_sock, bool try_flush = true);
 
 private:
     //send socket时的flag
@@ -499,13 +504,15 @@ private:
     MutexWrapper<recursive_mutex> _mtx_event;
 
     //一级发送缓存, socket可写时，会把一级缓存批量送入到二级缓存
-    List<BufferSock::Ptr> _send_buf_waiting;
+    List<std::pair<Buffer::Ptr, bool> > _send_buf_waiting;
     //一级发送缓存锁
     MutexWrapper<recursive_mutex> _mtx_send_buf_waiting;
     //二级发送缓存, socket可写时，会把二级缓存批量写入到socket
     List<BufferList::Ptr> _send_buf_sending;
     //二级发送缓存锁
     MutexWrapper<recursive_mutex> _mtx_send_buf_sending;
+    //发送buffer结果回调
+    BufferList::SendResult _send_result;
     //对象个数统计
     ObjectStatistic<Socket> _statistic;
 };

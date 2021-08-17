@@ -124,6 +124,11 @@ void Socket::setOnBeforeAccept(onCreateSocket cb){
     }
 }
 
+void Socket::setOnSendResult(onSendResult cb) {
+    LOCK_GUARD(_mtx_event);
+    _send_result = std::move(cb);
+}
+
 #define CLOSE_SOCK(fd) if(fd != -1) {close(fd);}
 
 void Socket::connect(const string &url, uint16_t port, onErrCB con_cb_in, float timeout_sec, const string &local_ip, uint16_t local_port) {
@@ -344,10 +349,13 @@ ssize_t Socket::send(string buf, struct sockaddr *addr, socklen_t addr_len, bool
 }
 
 ssize_t Socket::send(Buffer::Ptr buf, struct sockaddr *addr, socklen_t addr_len, bool try_flush) {
-    return send(std::make_shared<BufferSock>(std::move(buf), addr, addr_len), try_flush);
+    if (!addr || !addr_len) {
+        return send_l(std::move(buf), false, try_flush);
+    }
+    return send_l(std::make_shared<BufferSock>(std::move(buf), addr, addr_len), true, try_flush);
 }
 
-ssize_t Socket::send(BufferSock::Ptr buf, bool try_flush) {
+ssize_t Socket::send_l(Buffer::Ptr buf, bool is_buf_sock, bool try_flush) {
     auto size = buf ? buf->size() : 0;
     if (!size) {
         return 0;
@@ -366,7 +374,7 @@ ssize_t Socket::send(BufferSock::Ptr buf, bool try_flush) {
 
     {
         LOCK_GUARD(_mtx_send_buf_waiting);
-        _send_buf_waiting.emplace_back(std::move(buf));
+        _send_buf_waiting.emplace_back(std::move(buf), is_buf_sock);
     }
 
     if(try_flush){
@@ -614,7 +622,8 @@ bool Socket::flushData(const SockFD::Ptr &sock, bool poller_thread) {
                 LOCK_GUARD(_mtx_send_buf_waiting);
                 if (!_send_buf_waiting.empty()) {
                     //把一级缓中数数据放置到二级缓存中并清空
-                    send_buf_sending_tmp.emplace_back(std::make_shared<BufferList>(_send_buf_waiting));
+                    LOCK_GUARD(_mtx_event);
+                    send_buf_sending_tmp.emplace_back(std::make_shared<BufferList>(_send_buf_waiting, _send_result));
                     break;
                 }
             }
@@ -726,7 +735,7 @@ void Socket::enableRecv(bool enabled) {
     _poller->modifyEvent(rawFD(), read_flag | send_flag | Event_Error);
 }
 
-SockFD::Ptr Socket::makeSock(int sock,SockNum::SockType type){
+SockFD::Ptr Socket::makeSock(int sock, SockNum::SockType type) {
     return std::make_shared<SockFD>(sock, type, _poller);
 }
 
