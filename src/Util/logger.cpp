@@ -13,6 +13,7 @@
 #include "File.h"
 #include <string.h>
 #include <sys/stat.h>
+#include "NoticeCenter.h"
 
 namespace toolkit {
 #ifdef _WIN32
@@ -135,18 +136,22 @@ static inline const char *getFunctionName(const char *func) {
 #endif
 }
 
-LogContext::LogContext(LogLevel level, const char *file, const char *function, int line) :
+LogContext::LogContext(LogLevel level, const char *file, const char *function, int line, const char* moudleName) :
         _level(level),
         _line(line),
         _file(getFileName(file)),
-        _function(getFunctionName(function)) {
+        _function(getFunctionName(function)),
+		_moudle_name(moudleName) {
     gettimeofday(&_tv, NULL);
     _thread_name = getThreadName();
 }
 
 ///////////////////AsyncLogWriter///////////////////
+
+static string s_moudle_name = exeName(false);
+
 LogContextCapturer::LogContextCapturer(Logger &logger, LogLevel level, const char *file, const char *function, int line) :
-        _ctx(new LogContext(level, file, function, line)), _logger(logger) {
+        _ctx(new LogContext(level, file, function, line, s_moudle_name.c_str())), _logger(logger) {
 }
 
 LogContextCapturer::LogContextCapturer(const LogContextCapturer &that) : _ctx(that._ctx), _logger(that._logger) {
@@ -171,6 +176,7 @@ void LogContextCapturer::clear() {
 }
 
 ///////////////////AsyncLogWriter///////////////////
+
 AsyncLogWriter::AsyncLogWriter() : _exit_flag(false) {
     _thread = std::make_shared<thread>([this]() { this->run(); });
 }
@@ -210,6 +216,19 @@ void AsyncLogWriter::flushAll() {
     });
 }
 
+///////////////////EventChannel////////////////////
+
+const string EventChannel::kBroadcastLogEvent = "kBroadcastLogEvent";
+
+EventChannel::EventChannel(const string &name, LogLevel level) : LogChannel(name, level) {}
+
+void EventChannel::write(const Logger &logger, const LogContextPtr &ctx) {
+    if (_level > ctx->_level) {
+        return;
+    }
+    NoticeCenter::Instance().emitEvent(kBroadcastLogEvent, logger, ctx);
+}
+
 ///////////////////ConsoleChannel///////////////////
 
 #ifdef ANDROID
@@ -217,7 +236,6 @@ void AsyncLogWriter::flushAll() {
 #endif //ANDROID
 
 ConsoleChannel::ConsoleChannel(const string &name, LogLevel level) : LogChannel(name, level) {}
-ConsoleChannel::~ConsoleChannel() {}
 
 void ConsoleChannel::write(const Logger &logger, const LogContextPtr &ctx) {
     if (_level > ctx->_level) {
@@ -248,7 +266,6 @@ void ConsoleChannel::write(const Logger &logger, const LogContextPtr &ctx) {
 #include <sys/syslog.h>
 
 SysLogChannel::SysLogChannel(const string &name, LogLevel level) : LogChannel(name, level) {}
-SysLogChannel::~SysLogChannel() {}
 
 void SysLogChannel::write(const Logger &logger, const LogContextPtr &ctx) {
     if (_level > ctx->_level) {
@@ -315,7 +332,7 @@ void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr 
 
     if (enableDetail) {
 #if defined(_WIN32)
-        ost << logger.getName() <<"[" << GetCurrentProcessId() << "-" << ctx->_thread_name;
+        ost << ctx->_moudle_name <<"[" << GetCurrentProcessId() << "-" << ctx->_thread_name;
 #else
         ost << logger.getName() << "[" << getpid() << "-" << ctx->_thread_name;
 #endif
@@ -336,6 +353,7 @@ void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr 
 }
 
 ///////////////////FileChannelBase///////////////////
+
 FileChannelBase::FileChannelBase(const string &name, const string &path, LogLevel level) : LogChannel(name, level), _path(path) {}
 
 FileChannelBase::~FileChannelBase() {
@@ -445,8 +463,6 @@ static time_t getLogFileTime(const string &full_path){
 static uint64_t getDay(time_t second) {
     return (second + s_gmtoff) / s_second_per_day;
 }
-
-FileChannel::~FileChannel() {}
 
 FileChannel::FileChannel(const string &name, const string &dir, LogLevel level) : FileChannelBase(name, "", level) {
     _dir = dir;
