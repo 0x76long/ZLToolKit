@@ -8,11 +8,13 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <mutex>
 #include <string>
 #include <algorithm>
 #include <unordered_map>
+#include <random>
 
 #include "util.h"
 #include "onceToken.h"
@@ -67,24 +69,20 @@ using namespace std;
 
 namespace toolkit {
 
+static constexpr char CCH[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
 string makeRandStr(int sz, bool printable) {
-    char *tmp = new char[sz + 1];
-    static const char CCH[] =
-        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    int i;
-    for (i = 0; i < sz; i++) {
-        srand((unsigned)time(NULL) + i);
+    string ret;
+    ret.resize(sz);
+    std::mt19937 rng(std::random_device{}());
+    for (int i = 0; i < sz; ++i) {
         if (printable) {
-            int x = rand() % (sizeof(CCH) - 1);
-            tmp[i] = CCH[x];
-        }
-        else {
-            tmp[i] = rand() % 0xFF;
+            uint32_t x = rng() % (sizeof(CCH) - 1);
+            ret[i] = CCH[x];
+        } else {
+            ret[i] = rng() % 0xFF;
         }
     }
-    tmp[i] = 0;
-    string ret = tmp;
-    delete[] tmp;
     return ret;
 }
 
@@ -408,6 +406,7 @@ struct tm getLocalTime(time_t sec) {
 
 void setThreadName(const char *name) {
 #if defined(__linux) || defined(__linux__)
+    assert(strlen(name) < 16); // linux平台下线程名字长度需小于16
     pthread_setname_np(pthread_self(), name);
 #elif defined(__MACH__) || defined(__APPLE__)
     pthread_setname_np(name);
@@ -496,6 +495,21 @@ string getThreadName() {
     ss << std::this_thread::get_id();
     return ss.str();
 #endif
+}
+
+bool setThreadAffinity(int i) {
+#if (defined(__linux) || defined(__linux__)) && !defined(ANDROID)
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    if(i >= 0){
+        CPU_SET(i, &mask);
+    }
+    if (!pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask)) {
+        return true;
+    }
+    WarnL << "pthread_setaffinity_np failed:" << get_uv_errmsg();
+#endif
+    return false;
 }
 
 }  // namespace toolkit

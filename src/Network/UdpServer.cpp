@@ -103,13 +103,23 @@ void UdpServer::onRead(const Buffer::Ptr &buf, sockaddr *addr, int addr_len) {
     onRead_l(true, id, buf, addr, addr_len);
 }
 
+static void emitSessionRecv(const Session::Ptr &session, const Buffer::Ptr &buf){
+    try {
+        session->onRecv(buf);
+    } catch (SockException &ex) {
+        session->shutdown(ex);
+    } catch (exception &ex) {
+        session->shutdown(SockException(Err_shutdown, ex.what()));
+    }
+}
+
 void UdpServer::onRead_l(bool is_server_fd, const UdpServer::PeerIdType &id, const Buffer::Ptr &buf, sockaddr *addr, int addr_len) {
     // udp server fd收到数据时触发此函数；大部分情况下数据应该在peer fd触发，此函数应该不是热点函数
     bool is_new = false;
     if (auto session = getOrCreateSession(id, buf, addr, addr_len, is_new)) {
         if (session->getPoller()->isCurrentThread()) {
             //当前线程收到数据，直接处理数据
-            session->onRecv(buf);
+            emitSessionRecv(session, buf);
         } else {
             //数据漂移到其他线程，需要先切换线程
             WarnL << "udp packet incoming from other thread";
@@ -118,7 +128,7 @@ void UdpServer::onRead_l(bool is_server_fd, const UdpServer::PeerIdType &id, con
             auto cacheable_buf = std::make_shared<BufferString>(buf->toString());
             session->async([weak_session, cacheable_buf]() {
                 if (auto strong_session = weak_session.lock()) {
-                    strong_session->onRecv(cacheable_buf);
+                    emitSessionRecv(strong_session, cacheable_buf);
                 }
             });
         }
@@ -189,13 +199,12 @@ const Session::Ptr& UdpServer::createSession(const PeerIdType &id, const Buffer:
         if (!server) {
             return s_null_session;
         }
-        {
-            //如果已经创建该客户端对应的UdpSession类，那么直接返回
-            lock_guard<std::recursive_mutex> lck(*_session_mutex);
-            auto it = _session_map->find(id);
-            if (it != _session_map->end()) {
-                return it->second->session();
-            }
+
+        //如果已经创建该客户端对应的UdpSession类，那么直接返回
+        lock_guard<std::recursive_mutex> lck(*_session_mutex);
+        auto it = _session_map->find(id);
+        if (it != _session_map->end()) {
+            return it->second->session();
         }
 
         socket->bindUdpSock(_socket->get_local_port(), _socket->get_local_ip());
@@ -218,7 +227,7 @@ const Session::Ptr& UdpServer::createSession(const PeerIdType &id, const Buffer:
             //快速判断是否为本会话的的数据, 通常应该成立
             if (id == makeSockId(addr, addr_len)) {
                 if (auto strong_session = weak_session.lock()) {
-                    strong_session->onRecv(buf);
+                    emitSessionRecv(strong_session, buf);
                 }
                 return;
             }
@@ -248,7 +257,6 @@ const Session::Ptr& UdpServer::createSession(const PeerIdType &id, const Buffer:
             }
         });
 
-        lock_guard<std::recursive_mutex> lck(*_session_mutex);
         auto pr = _session_map->emplace(id, std::move(helper));
         assert(pr.second);
         return pr.first->second->session();
@@ -266,7 +274,7 @@ const Session::Ptr& UdpServer::createSession(const PeerIdType &id, const Buffer:
         auto session = session_creator();
         if (session) {
             //该数据不能丢弃，给session对象消费
-            session->onRecv(cacheable_buf);
+            emitSessionRecv(session, cacheable_buf);
         }
     });
     return s_null_session;

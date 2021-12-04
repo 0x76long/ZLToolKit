@@ -11,8 +11,9 @@
 #include "logger.h"
 #include "onceToken.h"
 #include "File.h"
-#include <string.h>
 #include <sys/stat.h>
+#include <assert.h>
+#include <string.h>
 #include "NoticeCenter.h"
 
 namespace toolkit {
@@ -197,7 +198,7 @@ void AsyncLogWriter::write(const LogContextPtr &ctx, Logger &logger) {
 }
 
 void AsyncLogWriter::run() {
-    setThreadName("async log thread");
+    setThreadName("async log");
     while (!_exit_flag) {
         _sem.wait();
         flushAll();
@@ -412,7 +413,7 @@ size_t FileChannelBase::size() {
 ///////////////////FileChannel///////////////////
 
 static const auto s_second_per_day = 24 * 60 * 60;
-static long s_gmtoff = 0;
+static long s_gmtoff = 0;//时间差
 static onceToken s_token([](){
 #ifdef _WIN32
     TIME_ZONE_INFORMATION tzinfo;
@@ -426,7 +427,7 @@ static onceToken s_token([](){
     if (dwStandardDaylight == TIME_ZONE_ID_DAYLIGHT) {
         bias += tzinfo.DaylightBias;
     }
-    s_gmtoff = -bias * 60;
+    s_gmtoff = -bias * 60;//时间差(分钟)
 #else
     s_gmtoff = getLocalTime(time(NULL)).tm_gmtoff;
 #endif // _WIN32
@@ -440,23 +441,19 @@ static string getLogFilePath(const string &dir, time_t second, int32_t index) {
     return dir + buf;
 }
 
+#if defined(_WIN32)
+#include "strptime_win.h"
+#endif
+
 //根据日志文件名返回GMT UNIX时间戳
 static time_t getLogFileTime(const string &full_path){
     auto name = getFileName(full_path.data());
-    int tm_mday;  // day of the month - [1, 31]
-    int tm_mon;   // months since January - [0, 11]
-    int tm_year;  // years since 1900
-    int32_t index;
-    int count = sscanf(name, "%d-%02d-%02d_%d.log", &tm_year, &tm_mon, &tm_mday, &index);
-    if (count != 4) {
+    struct tm tm{0};
+    if (!strptime(name, "%Y-%m-%d", &tm)) {
         return 0;
     }
-    struct tm tm{0};
-    tm.tm_year = tm_year - 1900;
-    tm.tm_mon = tm_mon - 1;
-    tm.tm_mday = tm_mday;
-    //本地时间转换成GMT时间
-    return mktime(&tm) - s_gmtoff;
+    //此函数会把本地时间转换成GMT时间戳
+    return mktime(&tm);
 }
 
 //获取1970年以来的第几天
@@ -585,6 +582,25 @@ void FileChannel::setFileMaxSize(size_t max_size) {
 
 void FileChannel::setFileMaxCount(size_t max_count) {
     _log_max_count = max_count > 1 ? max_count : 1;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+void LoggerWrapper::printLog(Logger &logger, int level, const char *file, const char *function, int line, const char *fmt, va_list ap) {
+    assert(file && function && fmt);
+    LogContextCapturer info(logger, (LogLevel) level, file, function, line);
+    char *str = nullptr;
+    vasprintf(&str, fmt, ap);
+    assert(str);
+    info << str;
+    free(str);
+}
+
+void LoggerWrapper::printLog(Logger &logger, int level, const char *file, const char *function, int line, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    printLog(logger, level, file, function, line, fmt, ap);
+    va_end(ap);
 }
 
 } /* namespace toolkit */
