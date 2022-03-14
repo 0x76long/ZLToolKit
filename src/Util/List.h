@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -13,7 +13,6 @@
 
 #include <list>
 #include <type_traits>
-using namespace std;
 
 namespace toolkit {
 
@@ -40,7 +39,7 @@ private:
 template<typename T>
 class List {
 public:
-    typedef ListNode<T> NodeType;
+    using NodeType = ListNode<T>;
     List(){}
     List(List &&that){
         swap(that);
@@ -183,10 +182,10 @@ private:
 #else
 
 template<typename T>
-class List : public list<T> {
+class List : public std::list<T> {
 public:
     template<typename ... ARGS>
-    List(ARGS &&...args) : list<T>(std::forward<ARGS>(args)...) {};
+    List(ARGS &&...args) : std::list<T>(std::forward<ARGS>(args)...) {};
 
     ~List() = default;
 

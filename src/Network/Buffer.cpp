@@ -1,30 +1,32 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <cstdlib>
 #include "Buffer.h"
+#include "Util/uv_errno.h"
 #include "Util/onceToken.h"
 
 namespace toolkit {
 
-StatisticImp(Buffer);
-StatisticImp(BufferRaw);
-StatisticImp(BufferLikeString);
-StatisticImp(BufferList);
+StatisticImp(Buffer)
+StatisticImp(BufferRaw)
+StatisticImp(BufferList)
+StatisticImp(BufferLikeString)
 
-BufferRaw::Ptr BufferRaw::create(){
+BufferRaw::Ptr BufferRaw::create() {
 #if 0
     static ResourcePool<BufferRaw> packet_pool;
     static onceToken token([]() {
         packet_pool.setSize(1024);
     });
-    auto ret = packet_pool.obtain();
+    auto ret = packet_pool.obtain2();
     ret->setSize(0);
     return ret;
 #else
@@ -38,7 +40,7 @@ bool BufferList::empty() {
     return _iovec_off == _iovec.size();
 }
 
-size_t BufferList::count(){
+size_t BufferList::count() {
     return _iovec.size() - _iovec_off;
 }
 
@@ -46,16 +48,16 @@ size_t BufferList::count(){
 int sendmsg(int fd, const struct msghdr *msg, int flags) {
     int n = 0;
     int total = 0;
-    for(auto i = 0; i != msg->msg_iovlen ; ++i ){
+    for (auto i = 0; i != msg->msg_iovlen; ++i) {
         do {
-            n = sendto(fd,(char *)msg->msg_iov[i].iov_base,msg->msg_iov[i].iov_len,flags,(struct sockaddr *)msg->msg_name,msg->msg_namelen);
-        }while (-1 == n && UV_EINTR == get_uv_error(true));
+            n = sendto(fd, (char *) msg->msg_iov[i].iov_base, msg->msg_iov[i].iov_len, flags, (struct sockaddr *) msg->msg_name, msg->msg_namelen);
+        } while (-1 == n && UV_EINTR == get_uv_error(true));
 
-        if(n == -1 ){
+        if (n == -1) {
             //可能一个字节都未发送成功
             return total ? total : -1;
         }
-        if(n < msg->msg_iov[i].iov_len){
+        if (n < msg->msg_iov[i].iov_len) {
             //发送部分字节成功
             return total + n;
         }
@@ -74,7 +76,7 @@ static BufferSock *getBufferSockPtr(std::pair<Buffer::Ptr, bool> &pr) {
     return static_cast<BufferSock *>(pr.first.get());
 }
 
-ssize_t BufferList::send_l(int fd, int flags,bool udp) {
+ssize_t BufferList::send_l(int fd, int flags, bool udp) {
     ssize_t n;
     do {
         struct msghdr msg;
@@ -89,11 +91,11 @@ ssize_t BufferList::send_l(int fd, int flags,bool udp) {
 
         msg.msg_iov = &(_iovec[_iovec_off]);
         msg.msg_iovlen = (decltype(msg.msg_iovlen)) (_iovec.size() - _iovec_off);
-        size_t max = udp ? 1 : IOV_MAX;
+        decltype(msg.msg_iovlen) max = udp ? 1 : IOV_MAX;
         if (msg.msg_iovlen > max) {
             msg.msg_iovlen = max;
         }
-        msg.msg_control = NULL;
+        msg.msg_control = nullptr;
         msg.msg_controllen = 0;
         msg.msg_flags = flags;
         n = sendmsg(fd, &msg, flags);
@@ -127,10 +129,10 @@ ssize_t BufferList::send_l(int fd, int flags,bool udp) {
 }
 
 ssize_t BufferList::send(int fd, int flags, bool udp) {
-    auto remainSize = _remain_size;
+    auto remain_size = _remain_size;
     while (_remain_size && send_l(fd, flags, udp) != -1);
 
-    ssize_t sent = remainSize - _remain_size;
+    ssize_t sent = remain_size - _remain_size;
     if (sent > 0) {
         //部分或全部发送成功
         return sent;
@@ -201,7 +203,7 @@ BufferSock::BufferSock(Buffer::Ptr buffer, struct sockaddr *addr, int addr_len) 
     _buffer = std::move(buffer);
 }
 
-BufferSock::~BufferSock(){
+BufferSock::~BufferSock() {
     if (_addr) {
         free(_addr);
         _addr = nullptr;

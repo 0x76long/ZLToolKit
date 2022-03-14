@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -11,20 +11,16 @@
 #ifndef NETWORK_TCPCLIENT_H
 #define NETWORK_TCPCLIENT_H
 
-#include <mutex>
 #include <memory>
-#include <functional>
 #include "Socket.h"
-#include "Util/TimeTicker.h"
 #include "Util/SSLBox.h"
-using namespace std;
 
 namespace toolkit {
 
 //Tcp客户端，Socket对象默认开始互斥锁
 class TcpClient : public std::enable_shared_from_this<TcpClient>, public SocketHelper {
 public:
-    typedef std::shared_ptr<TcpClient> Ptr;
+    using Ptr = std::shared_ptr<TcpClient>;
     TcpClient(const EventPoller::Ptr &poller = nullptr);
     ~TcpClient() override;
 
@@ -35,7 +31,7 @@ public:
      * @param timeout_sec 超时时间,单位秒
      * @param local_port 本地端口
      */
-    virtual void startConnect(const string &url, uint16_t port, float timeout_sec = 5, uint16_t local_port = 0);
+    virtual void startConnect(const std::string &url, uint16_t port, float timeout_sec = 5, uint16_t local_port = 0);
 
     /**
      * 主动断开连接
@@ -44,28 +40,28 @@ public:
     void shutdown(const SockException &ex = SockException(Err_shutdown, "self shutdown")) override;
 
     /**
-     * 判断是否与服务器连接中
+     * 连接中或已连接返回true，断开连接时返回false
      */
-    virtual bool alive();
+    virtual bool alive() const;
 
     /**
      * 设置网卡适配器,使用该网卡与服务器通信
      * @param local_ip 本地网卡ip
      */
-    virtual void setNetAdapter(const string &local_ip);
+    virtual void setNetAdapter(const std::string &local_ip);
 
 protected:
     /**
      * 连接服务器结果回调
      * @param ex 成功与否
      */
-    virtual void onConnect(const SockException &ex) {}
+    virtual void onConnect(const SockException &ex) = 0;
 
     /**
      * 收到数据回调
      * @param buf 接收到的数据(该buffer会重复使用)
      */
-    virtual void onRecv(const Buffer::Ptr &buf) {}
+    virtual void onRecv(const Buffer::Ptr &buf) = 0;
 
     /**
      * 数据全部发送完毕后回调
@@ -76,7 +72,7 @@ protected:
      * 被动断开连接回调
      * @param ex 断开原因
      */
-    virtual void onErr(const SockException &ex) {}
+    virtual void onErr(const SockException &ex) = 0;
 
     /**
      * tcp连接成功后每2秒触发一次该事件
@@ -87,7 +83,7 @@ private:
     void onSockConnect(const SockException &ex);
 
 private:
-    string _net_adapter = "0.0.0.0";
+    std::string _net_adapter = "0.0.0.0";
     std::shared_ptr<Timer> _timer;
     //对象个数统计
     ObjectStatistic<TcpClient> _statistic;
@@ -95,14 +91,14 @@ private:
 
 //用于实现TLS客户端的模板对象
 template<typename TcpClientType>
-class TcpClientWithSSL: public TcpClientType {
+class TcpClientWithSSL : public TcpClientType {
 public:
-    typedef std::shared_ptr<TcpClientWithSSL> Ptr;
+    using Ptr = std::shared_ptr<TcpClientWithSSL>;
 
     template<typename ...ArgsType>
     TcpClientWithSSL(ArgsType &&...args):TcpClientType(std::forward<ArgsType>(args)...) {}
 
-    ~TcpClientWithSSL() override{
+    ~TcpClientWithSSL() override {
         if (_ssl_box) {
             _ssl_box->flush();
         }
@@ -119,7 +115,7 @@ public:
     ssize_t send(Buffer::Ptr buf) override {
         if (_ssl_box) {
             auto size = buf->size();
-            _ssl_box->onSend(buf);
+            _ssl_box->onSend(std::move(buf));
             return size;
         }
         return TcpClientType::send(std::move(buf));
@@ -134,7 +130,7 @@ public:
         TcpClientType::send(std::move(const_cast<Buffer::Ptr &>(buf)));
     }
 
-    void startConnect(const string &url, uint16_t port, float timeout_sec = 5, uint16_t local_port = 0) override {
+    void startConnect(const std::string &url, uint16_t port, float timeout_sec = 5, uint16_t local_port = 0) override {
         _host = url;
         TcpClientType::startConnect(url, port, timeout_sec, local_port);
     }
@@ -159,7 +155,7 @@ protected:
     }
 
 private:
-    string _host;
+    std::string _host;
     std::shared_ptr<SSL_Box> _ssl_box;
 };
 

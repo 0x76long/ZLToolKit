@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -11,24 +11,15 @@
 #ifndef UTIL_LOGGER_H_
 #define UTIL_LOGGER_H_
 
-#include <time.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 #include <set>
 #include <map>
-#include <deque>
-#include <iostream>
 #include <fstream>
-#include <sstream>
 #include <thread>
 #include <memory>
 #include <mutex>
-#include "Util/util.h"
-#include "Util/List.h"
+#include "util.h"
+#include "List.h"
 #include "Thread/semaphore.h"
-
-using namespace std;
 
 namespace toolkit {
 
@@ -37,7 +28,8 @@ class LogChannel;
 class LogWriter;
 class Logger;
 
-typedef std::shared_ptr<LogContext> LogContextPtr;
+using LogContextPtr = std::shared_ptr<LogContext>;
+
 typedef enum {
     LTrace = 0, LDebug, LInfo, LWarn, LError
 } LogLevel;
@@ -51,7 +43,7 @@ void setLogger(Logger *logger);
 class Logger : public std::enable_shared_from_this<Logger>, public noncopyable {
 public:
     friend class AsyncLogWriter;
-    typedef std::shared_ptr<Logger> Ptr;
+    using Ptr = std::shared_ptr<Logger>;
 
     /**
      * 获取日志单例
@@ -59,7 +51,7 @@ public:
      */
     static Logger &Instance();
 
-    Logger(const string &loggerName);
+    explicit Logger(const std::string &loggerName);
     ~Logger();
 
     /**
@@ -72,14 +64,14 @@ public:
      * 删除日志通道，非线程安全的
      * @param name log通道名
      */
-    void del(const string &name);
+    void del(const std::string &name);
 
     /**
      * 获取日志通道，非线程安全的
      * @param name log通道名
      * @return 线程通道
      */
-    std::shared_ptr<LogChannel> get(const string &name);
+    std::shared_ptr<LogChannel> get(const std::string &name);
 
     /**
      * 设置写log器，非线程安全的
@@ -97,7 +89,7 @@ public:
      * 获取logger名
      * @return logger名
      */
-    const string &getName() const;
+    const std::string &getName() const;
 
     /**
      * 写日志
@@ -111,53 +103,63 @@ private:
      * @param ctx 日志信息
      */
     void writeChannels(const LogContextPtr &ctx);
+    void writeChannels_l(const LogContextPtr &ctx);
 
 private:
-    map<string, std::shared_ptr<LogChannel> > _channels;
+    LogContextPtr _last_log;
+    std::string _logger_name;
     std::shared_ptr<LogWriter> _writer;
-    string _loggerName;
+    std::map<std::string, std::shared_ptr<LogChannel> > _channels;
 };
 
 ///////////////////LogContext///////////////////
 /**
 * 日志上下文
 */
-class LogContext : public ostringstream {
+class LogContext : public std::ostringstream {
 public:
     //_file,_function改成string保存，目的是有些情况下，指针可能会失效
     //比如说动态库中打印了一条日志，然后动态库卸载了，那么指向静态数据区的指针就会失效
-
-    LogContext(LogLevel level, const char *file, const char *function, int line, const char* moudleName);
+    LogContext() = default;
+    LogContext(LogLevel level, const char *file, const char *function, int line, const char *module_name);
     ~LogContext() = default;
 
     LogLevel _level;
     int _line;
-    string _file;
-    string _function;
-    string _thread_name;
-    string _moudle_name;
+    int _repeat = 0;
+    std::string _file;
+    std::string _function;
+    std::string _thread_name;
+    std::string _module_name;
     struct timeval _tv;
+
+    const std::string &str();
+
+private:
+    bool _got_content = false;
+    std::string _content;
 };
 
 /**
  * 日志上下文捕获器
  */
-class LogContextCapturer {
+class LogContextCapture {
 public:
-    typedef std::shared_ptr<LogContextCapturer> Ptr;
-    LogContextCapturer(Logger &logger, LogLevel level, const char *file, const char *function, int line);
-    LogContextCapturer(const LogContextCapturer &that);
-    ~LogContextCapturer();
+    using Ptr = std::shared_ptr<LogContextCapture>;
+
+    LogContextCapture(Logger &logger, LogLevel level, const char *file, const char *function, int line);
+    LogContextCapture(const LogContextCapture &that);
+    ~LogContextCapture();
 
     /**
      * 输入std::endl(回车符)立即输出日志
      * @param f std::endl(回车符)
      * @return 自身引用
      */
-    LogContextCapturer &operator<<(ostream &(*f)(ostream &));
+    LogContextCapture &operator<<(std::ostream &(*f)(std::ostream &));
 
     template<typename T>
-    LogContextCapturer &operator<<(T &&data) {
+    LogContextCapture &operator<<(T &&data) {
         if (!_ctx) {
             return *this;
         }
@@ -179,8 +181,9 @@ private:
  */
 class LogWriter : public noncopyable {
 public:
-    LogWriter() {}
-    virtual ~LogWriter() {}
+    LogWriter() = default;
+    virtual ~LogWriter() = default;
+
     virtual void write(const LogContextPtr &ctx, Logger &logger) = 0;
 };
 
@@ -196,10 +199,10 @@ private:
 
 private:
     bool _exit_flag;
-    mutex _mutex;
     semaphore _sem;
-    std::shared_ptr<thread> _thread;
-    List<std::pair<LogContextPtr,Logger *> > _pending;
+    std::mutex _mutex;
+    std::shared_ptr<std::thread> _thread;
+    List<std::pair<LogContextPtr, Logger *> > _pending;
 };
 
 ///////////////////LogChannel///////////////////
@@ -208,11 +211,11 @@ private:
  */
 class LogChannel : public noncopyable {
 public:
-    LogChannel(const string &name, LogLevel level = LTrace);
+    LogChannel(const std::string &name, LogLevel level = LTrace);
     virtual ~LogChannel();
 
     virtual void write(const Logger &logger, const LogContextPtr &ctx) = 0;
-    const string &name() const;
+    const std::string &name() const;
     void setLevel(LogLevel level);
     static std::string printTime(const timeval &tv);
 
@@ -220,13 +223,13 @@ protected:
     /**
     * 打印日志至输出流
     * @param ost 输出流
-    * @param enableColor 是否启用颜色
-    * @param enableDetail 是否打印细节(函数名、源码文件名、源码行)
+    * @param enable_color 是否启用颜色
+    * @param enable_detail 是否打印细节(函数名、源码文件名、源码行)
     */
-    virtual void format(const Logger &logger, ostream &ost, const LogContextPtr &ctx, bool enableColor = true, bool enableDetail = true);
+    virtual void format(const Logger &logger, std::ostream &ost, const LogContextPtr &ctx, bool enable_color = true, bool enable_detail = true);
 
 protected:
-    string _name;
+    std::string _name;
     LogLevel _level;
 };
 
@@ -236,11 +239,11 @@ protected:
 class EventChannel : public LogChannel {
 public:
     //输出日志时的广播名
-    static const string kBroadcastLogEvent;
+    static const std::string kBroadcastLogEvent;
     //日志广播参数类型和列表
     #define BroadcastLogEventArgs const Logger &logger, const LogContextPtr &ctx
 
-    EventChannel(const string &name = "EventChannel", LogLevel level = LTrace);
+    EventChannel(const std::string &name = "EventChannel", LogLevel level = LTrace);
     ~EventChannel() override = default;
 
     void write(const Logger &logger, const LogContextPtr &ctx) override;
@@ -251,7 +254,7 @@ public:
  */
 class ConsoleChannel : public LogChannel {
 public:
-    ConsoleChannel(const string &name = "ConsoleChannel", LogLevel level = LTrace);
+    ConsoleChannel(const std::string &name = "ConsoleChannel", LogLevel level = LTrace);
     ~ConsoleChannel() override = default;
 
     void write(const Logger &logger, const LogContextPtr &logContext) override;
@@ -262,12 +265,12 @@ public:
  */
 class FileChannelBase : public LogChannel {
 public:
-    FileChannelBase(const string &name = "FileChannelBase", const string &path = exePath() + ".log", LogLevel level = LTrace);
+    FileChannelBase(const std::string &name = "FileChannelBase", const std::string &path = exePath() + ".log", LogLevel level = LTrace);
     ~FileChannelBase() override;
 
     void write(const Logger &logger, const LogContextPtr &ctx) override;
-    bool setPath(const string &path);
-    const string &path() const;
+    bool setPath(const std::string &path);
+    const std::string &path() const;
 
 protected:
     virtual bool open();
@@ -275,8 +278,8 @@ protected:
     virtual size_t size();
 
 protected:
-    string _path;
-    ofstream _fstream;
+    std::string _path;
+    std::ofstream _fstream;
 };
 
 class Ticker;
@@ -287,7 +290,7 @@ class Ticker;
  */
 class FileChannel : public FileChannelBase {
 public:
-    FileChannel(const string &name = "FileChannel", const string &dir = exeDir() + "log/", LogLevel level = LTrace);
+    FileChannel(const std::string &name = "FileChannel", const std::string &dir = exeDir() + "log/", LogLevel level = LTrace);
     ~FileChannel() override = default;
 
     /**
@@ -343,31 +346,32 @@ private:
     size_t _index = 0;
     int64_t _last_day = -1;
     time_t _last_check_time = 0;
-    string _dir;
-    set<string> _log_file_map;
+    std::string _dir;
+    std::set<std::string> _log_file_map;
 };
 
 #if defined(__MACH__) || ((defined(__linux) || defined(__linux__)) && !defined(ANDROID))
 class SysLogChannel : public LogChannel {
 public:
-    SysLogChannel(const string &name = "SysLogChannel" , LogLevel level = LTrace) ;
+    SysLogChannel(const std::string &name = "SysLogChannel", LogLevel level = LTrace);
     ~SysLogChannel() override = default;
 
-    void write(const Logger &logger , const LogContextPtr &logContext) override;
+    void write(const Logger &logger, const LogContextPtr &logContext) override;
 };
+
 #endif//#if defined(__MACH__) || ((defined(__linux) || defined(__linux__)) &&  !defined(ANDROID))
 
 class LoggerWrapper {
 public:
     template<typename First, typename ...ARGS>
-    static inline void printLogArray(Logger &logger, LogLevel level, const char *file, const char *function, int line, First &&first, ARGS && ...args) {
-        LogContextCapturer log(logger, level, file, function, line);
+    static inline void printLogArray(Logger &logger, LogLevel level, const char *file, const char *function, int line, First &&first, ARGS &&...args) {
+        LogContextCapture log(logger, level, file, function, line);
         log << std::forward<First>(first);
         appendLog(log, std::forward<ARGS>(args)...);
     }
 
     static inline void printLogArray(Logger &logger, LogLevel level, const char *file, const char *function, int line) {
-        LogContextCapturer log(logger, level, file, function, line);
+        LogContextCapture log(logger, level, file, function, line);
     }
 
     template<typename Log, typename First, typename ...ARGS>
@@ -380,38 +384,37 @@ public:
     static inline void appendLog(Log &out) {}
 
     //printf样式的日志打印
-    static void printLog(Logger &logger, int level, const char *file, const char *function, int line, const char *fmt, va_list ap);
     static void printLog(Logger &logger, int level, const char *file, const char *function, int line, const char *fmt, ...);
+    static void printLogV(Logger &logger, int level, const char *file, const char *function, int line, const char *fmt, va_list ap);
 };
-
 
 //可重置默认值
 extern Logger *g_defaultLogger;
 
 //用法: DebugL << 1 << "+" << 2 << '=' << 3;
-#define WriteL(level) LogContextCapturer(getLogger(), level, __FILE__, __FUNCTION__, __LINE__)
-#define TraceL WriteL(LTrace)
-#define DebugL WriteL(LDebug)
-#define InfoL WriteL(LInfo)
-#define WarnL WriteL(LWarn)
-#define ErrorL WriteL(LError)
+#define WriteL(level) ::toolkit::LogContextCapture(::toolkit::getLogger(), level, __FILE__, __FUNCTION__, __LINE__)
+#define TraceL WriteL(::toolkit::LTrace)
+#define DebugL WriteL(::toolkit::LDebug)
+#define InfoL WriteL(::toolkit::LInfo)
+#define WarnL WriteL(::toolkit::LWarn)
+#define ErrorL WriteL(::toolkit::LError)
 
 //用法: LogD("%d + %s = %c", 1 "2", 'c');
-#define PrintLog(level, fmt, ...) LoggerWrapper::printLog(getLogger(), level, __FILE__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)
-#define PrintT(fmt, ...) PrintLog(LTrace, fmt, ##__VA_ARGS__)
-#define PrintD(fmt, ...) PrintLog(LDebug, fmt, ##__VA_ARGS__)
-#define PrintI(fmt, ...) PrintLog(LInfo, fmt, ##__VA_ARGS__)
-#define PrintW(fmt, ...) PrintLog(LWarn, fmt, ##__VA_ARGS__)
-#define PrintE(fmt, ...) PrintLog(LError, fmt, ##__VA_ARGS__)
+#define PrintLog(level, ...) ::toolkit::LoggerWrapper::printLog(::toolkit::getLogger(), level, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define PrintT(...) PrintLog(::toolkit::LTrace, ##__VA_ARGS__)
+#define PrintD(...) PrintLog(::toolkit::LDebug, ##__VA_ARGS__)
+#define PrintI(...) PrintLog(::toolkit::LInfo, ##__VA_ARGS__)
+#define PrintW(...) PrintLog(::toolkit::LWarn, ##__VA_ARGS__)
+#define PrintE(...) PrintLog(::toolkit::LError, ##__VA_ARGS__)
 
 //用法: LogD(1, "+", "2", '=', 3);
 //用于模板实例化的原因，如果每次打印参数个数和类型不一致，可能会导致二进制代码膨胀
-#define LogL(level, ...) LoggerWrapper::printLogArray(getLogger(), (LogLevel)level, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
-#define LogT(...) LogL(LTrace, ##__VA_ARGS__)
-#define LogD(...) LogL(LDebug, ##__VA_ARGS__)
-#define LogI(...) LogL(LInfo, ##__VA_ARGS__)
-#define LogW(...) LogL(LWarn, ##__VA_ARGS__)
-#define LogE(...) LogL(LError, ##__VA_ARGS__)
+#define LogL(level, ...) ::toolkit::LoggerWrapper::printLogArray(::toolkit::getLogger(), (LogLevel)level, __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define LogT(...) LogL(::toolkit::LTrace, ##__VA_ARGS__)
+#define LogD(...) LogL(::toolkit::LDebug, ##__VA_ARGS__)
+#define LogI(...) LogL(::toolkit::LInfo, ##__VA_ARGS__)
+#define LogW(...) LogL(::toolkit::LWarn, ##__VA_ARGS__)
+#define LogE(...) LogL(::toolkit::LError, ##__VA_ARGS__)
 
 } /* namespace toolkit */
 #endif /* UTIL_LOGGER_H_ */

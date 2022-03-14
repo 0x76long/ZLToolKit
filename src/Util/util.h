@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -12,8 +12,8 @@
 #define UTIL_UTIL_H_
 
 #include <ctime>
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <sstream>
@@ -24,13 +24,13 @@
 #undef FD_SETSIZE
 //修改默认64为1024路
 #define FD_SETSIZE 1024
-#include <WinSock2.h>
+#include <winsock2.h>
 #pragma comment (lib,"WS2_32")
 #else
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <stddef.h>
+#include <cstddef>
 #endif // defined(_WIN32)
 
 #if defined(__APPLE__)
@@ -45,32 +45,30 @@
 #define INSTANCE_IMP(class_name, ...) \
 class_name &class_name::Instance() { \
     static std::shared_ptr<class_name> s_instance(new class_name(__VA_ARGS__)); \
-    static class_name &s_insteanc_ref = *s_instance; \
-    return s_insteanc_ref; \
+    static class_name &s_instance_ref = *s_instance; \
+    return s_instance_ref; \
 }
-
-using namespace std;
 
 namespace toolkit {
 
-#define StrPrinter _StrPrinter()
-class _StrPrinter : public string {
+#define StrPrinter ::toolkit::_StrPrinter()
+class _StrPrinter : public std::string {
 public:
     _StrPrinter() {}
 
     template<typename T>
     _StrPrinter& operator <<(T && data) {
         _stream << std::forward<T>(data);
-        this->string::operator=(_stream.str());
+        this->std::string::operator=(_stream.str());
         return *this;
     }
 
-    string operator <<(std::ostream&(*f)(std::ostream&)) const {
+    std::string operator <<(std::ostream&(*f)(std::ostream&)) const {
         return *this;
     }
 
 private:
-    stringstream _stream;
+    std::stringstream _stream;
 };
 
 //禁止拷贝基类
@@ -89,7 +87,7 @@ private:
 //可以保存任意的对象
 class Any{
 public:
-    typedef std::shared_ptr<Any> Ptr;
+    using Ptr = std::shared_ptr<Any>;
 
     Any() = default;
     ~Any() = default;
@@ -120,11 +118,11 @@ private:
 };
 
 //用于保存一些外加属性
-class AnyStorage : public unordered_map<string,Any>{
+class AnyStorage : public std::unordered_map<std::string,Any>{
 public:
     AnyStorage() = default;
     ~AnyStorage() = default;
-    typedef std::shared_ptr<AnyStorage> Ptr;
+    using Ptr = std::shared_ptr<AnyStorage>;
 };
 
 //对象安全的构建和析构
@@ -164,27 +162,27 @@ public:
     }
 
 private:
-    static atomic<size_t> & getCounter();
+    static std::atomic<size_t> & getCounter();
 };
 
 #define StatisticImp(Type)  \
     template<> \
-    atomic<size_t>& ObjectStatistic<Type>::getCounter(){ \
-        static atomic<size_t> instance(0); \
+    std::atomic<size_t>& ObjectStatistic<Type>::getCounter(){ \
+        static std::atomic<size_t> instance(0); \
         return instance; \
     }
 
-string makeRandStr(int sz, bool printable = true);
-string hexdump(const void *buf, size_t len);
-string hexmem(const void* buf, size_t len);
-string exePath(bool isExe = true);
-string exeDir(bool isExe = true);
-string exeName(bool isExe = true);
+std::string makeRandStr(int sz, bool printable = true);
+std::string hexdump(const void *buf, size_t len);
+std::string hexmem(const void* buf, size_t len);
+std::string exePath(bool isExe = true);
+std::string exeDir(bool isExe = true);
+std::string exeName(bool isExe = true);
 
-vector<string> split(const string& s, const char *delim);
+std::vector<std::string> split(const std::string& s, const char *delim);
 //去除前后的空格、回车符、制表符...
-std::string& trim(std::string &s,const string &chars=" \r\n\t");
-std::string trim(std::string &&s,const string &chars=" \r\n\t");
+std::string& trim(std::string &s,const std::string &chars=" \r\n\t");
+std::string trim(std::string &&s,const std::string &chars=" \r\n\t");
 // string转小写
 std::string &strToLower(std::string &str);
 std::string strToLower(std::string &&str);
@@ -192,13 +190,13 @@ std::string strToLower(std::string &&str);
 std::string &strToUpper(std::string &str);
 std::string strToUpper(std::string &&str);
 //替换子字符串
-void replace(string &str, const string &old_str, const string &new_str) ;
+void replace(std::string &str, const std::string &old_str, const std::string &new_str) ;
 //判断是否为ip
 bool isIP(const char *str);
 //字符串是否以xx开头
-bool start_with(const string &str, const string &substr);
+bool start_with(const std::string &str, const std::string &substr);
 //字符串是否以xx结尾
-bool end_with(const string &str, const string &substr);
+bool end_with(const std::string &str, const std::string &substr);
 
 #ifndef bzero
 #define bzero(ptr,size)  memset((ptr),0,(size));
@@ -251,7 +249,7 @@ uint64_t getCurrentMicrosecond(bool system_time = false);
  * @param fmt 时间格式，譬如%Y-%m-%d %H:%M:%S
  * @return 时间字符串
  */
-string getTimeStr(const char *fmt,time_t time = 0);
+std::string getTimeStr(const char *fmt,time_t time = 0);
 
 /**
  * 根据unix时间戳获取本地时间
@@ -268,7 +266,7 @@ void setThreadName(const char *name);
 /**
  * 获取线程名
  */
-string getThreadName();
+std::string getThreadName();
 
 /**
  * 设置当前线程cpu亲和性

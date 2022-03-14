@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -23,7 +23,7 @@ using namespace std;
 
 namespace toolkit {
 
-StatisticImp(Socket);
+StatisticImp(Socket)
 
 static SockException toSockException(int error) {
     switch (error) {
@@ -49,7 +49,7 @@ static SockException getSockErr(const SockFD::Ptr &sock, bool try_errno = true) 
 }
 
 Socket::Ptr Socket::createSocket(const EventPoller::Ptr &poller, bool enable_mutex){
-    return Socket::Ptr(new Socket(poller, enable_mutex));
+    return std::make_shared<Socket>(poller, enable_mutex);
 }
 
 Socket::Socket(const EventPoller::Ptr &poller, bool enable_mutex) :
@@ -77,7 +77,7 @@ void Socket::setOnRead(onReadCB cb) {
         _on_read = std::move(cb);
     } else {
         _on_read = [](const Buffer::Ptr &buf, struct sockaddr *, int) {
-            WarnL << "Socket not set readCB";
+            WarnL << "Socket not set read callback, data ignored:" << buf->size();
         };
     }
 }
@@ -88,7 +88,7 @@ void Socket::setOnErr(onErrCB cb) {
         _on_err = std::move(cb);
     } else {
         _on_err = [](const SockException &err) {
-            WarnL << "Socket not set errCB";
+            WarnL << "Socket not set err callback, err:" << err.what();
         };
     }
 }
@@ -99,7 +99,7 @@ void Socket::setOnAccept(onAcceptCB cb) {
         _on_accept = std::move(cb);
     } else {
         _on_accept = [](Socket::Ptr &sock, shared_ptr<void> &complete) {
-            WarnL << "Socket not set acceptCB";
+            WarnL << "Socket not set accept callback, peer fd:" << sock->rawFD();
         };
     }
 }
@@ -165,7 +165,7 @@ void Socket::connect(const string &url, uint16_t port, onErrCB con_cb_in, float 
         weak_ptr<SockFD> weak_sock_fd = sock_fd;
 
         //监听该socket是否可写，可写表明已经连接服务器成功
-        int result = strong_self->_poller->addEvent(sock, Event_Write, [weak_self, weak_sock_fd, con_cb](int event) {
+        int result = strong_self->_poller->addEvent(sock, EventPoller::Event_Write, [weak_self, weak_sock_fd, con_cb](int event) {
             auto strong_sock_fd = weak_sock_fd.lock();
             auto strong_self = weak_self.lock();
             if (strong_sock_fd && strong_self) {
@@ -184,29 +184,31 @@ void Socket::connect(const string &url, uint16_t port, onErrCB con_cb_in, float 
         strong_self->_sock_fd = sock_fd;
     });
 
-    auto poller = _poller;
-    weak_ptr<function<void(int)> > weak_task = async_con_cb;
-
-    WorkThreadPool::Instance().getExecutor()->async([url, port, local_ip, local_port, weak_task, poller]() {
-        //阻塞式dns解析放在后台线程执行
-        int sock = SockUtil::connect(url.data(), port, true, local_ip.data(), local_port);
-        poller->async([sock, weak_task]() {
-            auto strong_task = weak_task.lock();
-            if (strong_task) {
-                (*strong_task)(sock);
-            } else {
-                CLOSE_SOCK(sock);
-            }
+    if (isIP(url.data())) {
+        (*async_con_cb)(SockUtil::connect(url.data(), port, true, local_ip.data(), local_port));
+    } else {
+        auto poller = _poller;
+        weak_ptr<function<void(int)>> weak_task = async_con_cb;
+        WorkThreadPool::Instance().getExecutor()->async([url, port, local_ip, local_port, weak_task, poller]() {
+            //阻塞式dns解析放在后台线程执行
+            int sock = SockUtil::connect(url.data(), port, true, local_ip.data(), local_port);
+            poller->async([sock, weak_task]() {
+                auto strong_task = weak_task.lock();
+                if (strong_task) {
+                    (*strong_task)(sock);
+                } else {
+                    CLOSE_SOCK(sock);
+                }
+            });
         });
-    });
+        _async_con_cb = async_con_cb;
+    }
 
     //连接超时定时器
     _con_timer = std::make_shared<Timer>(timeout_sec, [weak_self, con_cb]() {
         con_cb(SockException(Err_timeout, uv_strerror(UV_ETIMEDOUT)));
         return false;
     }, _poller);
-
-    _async_con_cb = async_con_cb;
 }
 
 void Socket::onConnected(const SockFD::Ptr &sock, const onErrCB &cb) {
@@ -235,20 +237,20 @@ bool Socket::attachEvent(const SockFD::Ptr &sock, bool is_udp) {
     weak_ptr<SockFD> weak_sock = sock;
     _enable_recv = true;
     _read_buffer = _poller->getSharedBuffer();
-    int result = _poller->addEvent(sock->rawFd(), Event_Read | Event_Error | Event_Write, [weak_self,weak_sock,is_udp](int event) {
+    int result = _poller->addEvent(sock->rawFd(), EventPoller::Event_Read | EventPoller::Event_Error | EventPoller::Event_Write, [weak_self,weak_sock,is_udp](int event) {
         auto strong_self = weak_self.lock();
         auto strong_sock = weak_sock.lock();
         if (!strong_self || !strong_sock) {
             return;
         }
 
-        if (event & Event_Read) {
+        if (event & EventPoller::Event_Read) {
             strong_self->onRead(strong_sock, is_udp);
         }
-        if (event & Event_Write) {
+        if (event & EventPoller::Event_Write) {
             strong_self->onWriteAble(strong_sock);
         }
-        if (event & Event_Error) {
+        if (event & EventPoller::Event_Error) {
             strong_self->emitErr(getSockErr(strong_sock));
         }
     });
@@ -438,7 +440,7 @@ bool Socket::listen(const SockFD::Ptr &sock){
     weak_ptr<SockFD> weak_sock = sock;
     weak_ptr<Socket> weak_self = shared_from_this();
     _enable_recv = true;
-    int result = _poller->addEvent(sock->rawFd(), Event_Read | Event_Error, [weak_self, weak_sock](int event) {
+    int result = _poller->addEvent(sock->rawFd(), EventPoller::Event_Read | EventPoller::Event_Error, [weak_self, weak_sock](int event) {
         auto strong_self = weak_self.lock();
         auto strong_sock = weak_sock.lock();
         if (!strong_self || !strong_sock) {
@@ -464,9 +466,9 @@ bool Socket::listen(uint16_t port, const string &local_ip, int backlog) {
     return listen(makeSock(sock, SockNum::Sock_TCP));
 }
 
-bool Socket::bindUdpSock(uint16_t port, const string &local_ip) {
+bool Socket::bindUdpSock(uint16_t port, const string &local_ip, bool enable_reuse) {
     closeSock();
-    int fd = SockUtil::bindUdpSock(port, local_ip.data());
+    int fd = SockUtil::bindUdpSock(port, local_ip.data(), enable_reuse);
     if (fd == -1) {
         return false;
     }
@@ -482,9 +484,9 @@ bool Socket::bindUdpSock(uint16_t port, const string &local_ip) {
 int Socket::onAccept(const SockFD::Ptr &sock, int event) noexcept {
     int fd;
     while (true) {
-        if (event & Event_Read) {
+        if (event & EventPoller::Event_Read) {
             do {
-                fd = (int)accept(sock->rawFd(), NULL, NULL);
+                fd = (int)accept(sock->rawFd(), nullptr, nullptr);
             } while (-1 == fd && UV_EINTR == get_uv_error(true));
 
             if (fd == -1) {
@@ -550,7 +552,7 @@ int Socket::onAccept(const SockFD::Ptr &sock, int event) noexcept {
             }
         }
 
-        if (event & Event_Error) {
+        if (event & EventPoller::Event_Error) {
             auto ex = getSockErr(sock);
             emitErr(ex);
             ErrorL << "tcp服务器监听异常:" << ex.what();
@@ -713,15 +715,15 @@ void Socket::onWriteAble(const SockFD::Ptr &sock) {
 void Socket::startWriteAbleEvent(const SockFD::Ptr &sock) {
     //开始监听socket可写事件
     _sendable = false;
-    int flag = _enable_recv ? Event_Read : 0;
-    _poller->modifyEvent(sock->rawFd(), flag | Event_Error | Event_Write);
+    int flag = _enable_recv ? EventPoller::Event_Read : 0;
+    _poller->modifyEvent(sock->rawFd(), flag | EventPoller::Event_Error | EventPoller::Event_Write);
 }
 
 void Socket::stopWriteAbleEvent(const SockFD::Ptr &sock) {
     //停止监听socket可写事件
     _sendable = true;
-    int flag = _enable_recv ? Event_Read : 0;
-    _poller->modifyEvent(sock->rawFd(), flag | Event_Error);
+    int flag = _enable_recv ? EventPoller::Event_Read : 0;
+    _poller->modifyEvent(sock->rawFd(), flag | EventPoller::Event_Error);
 }
 
 void Socket::enableRecv(bool enabled) {
@@ -729,10 +731,10 @@ void Socket::enableRecv(bool enabled) {
         return;
     }
     _enable_recv = enabled;
-    int read_flag = _enable_recv ? Event_Read : 0;
+    int read_flag = _enable_recv ? EventPoller::Event_Read : 0;
     //可写时，不监听可写事件
-    int send_flag = _sendable ? 0 : Event_Write;
-    _poller->modifyEvent(rawFD(), read_flag | send_flag | Event_Error);
+    int send_flag = _sendable ? 0 : EventPoller::Event_Write;
+    _poller->modifyEvent(rawFD(), read_flag | send_flag | EventPoller::Event_Error);
 }
 
 SockFD::Ptr Socket::makeSock(int sock, SockNum::SockType type) {
@@ -937,6 +939,11 @@ void SocketHelper::setOnCreateSocket(Socket::onCreateSocket cb){
 
 Socket::Ptr SocketHelper::createSocket(){
     return _on_create_socket(_poller);
+}
+
+std::ostream &operator<<(std::ostream &ost, const SockException &err) {
+    ost << err.getErrCode() << "(" << err.what() << ")";
+    return ost;
 }
 
 }  // namespace toolkit

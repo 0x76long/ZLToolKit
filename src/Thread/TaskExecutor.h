@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -11,13 +11,11 @@
 #ifndef ZLTOOLKIT_TASKEXECUTOR_H
 #define ZLTOOLKIT_TASKEXECUTOR_H
 
+#include <mutex>
 #include <memory>
 #include <functional>
 #include "Util/List.h"
 #include "Util/util.h"
-#include "Util/onceToken.h"
-#include "Util/TimeTicker.h"
-using namespace std;
 
 namespace toolkit {
 
@@ -57,8 +55,8 @@ private:
             _sleep = slp;
         }
 
-        uint64_t _time;
         bool _sleep;
+        uint64_t _time;
     };
 
 private:
@@ -67,7 +65,7 @@ private:
     uint64_t _last_wake_time;
     uint64_t _max_size;
     uint64_t _max_usec;
-    mutex _mtx;
+    std::mutex _mtx;
     List<TimeRecord> _time_list;
 };
 
@@ -85,7 +83,7 @@ template<class R, class... ArgTypes>
 class TaskCancelableImp<R(ArgTypes...)> : public TaskCancelable {
 public:
     using Ptr = std::shared_ptr<TaskCancelableImp>;
-    using func_type = function<R(ArgTypes...)>;
+    using func_type = std::function<R(ArgTypes...)>;
 
     ~TaskCancelableImp() = default;
 
@@ -103,14 +101,14 @@ public:
         return _strongTask && *_strongTask;
     }
 
-    void operator=(nullptr_t) {
+    void operator=(std::nullptr_t) {
         _strongTask = nullptr;
     }
 
     R operator()(ArgTypes ...args) const {
         auto strongTask = _weakTask.lock();
         if (strongTask && *strongTask) {
-            return (*strongTask)(forward<ArgTypes>(args)...);
+            return (*strongTask)(std::forward<ArgTypes>(args)...);
         }
         return defaultValue<R>();
     }
@@ -136,7 +134,7 @@ protected:
     std::shared_ptr<func_type> _strongTask;
 };
 
-using TaskIn = function<void()>;
+using TaskIn = std::function<void()>;
 using Task = TaskCancelableImp<void()>;
 
 class TaskExecutorInterface {
@@ -180,7 +178,7 @@ public:
 */
 class TaskExecutor : public ThreadLoadCounter, public TaskExecutorInterface {
 public:
-    using Ptr = shared_ptr<TaskExecutor>;
+    using Ptr = std::shared_ptr<TaskExecutor>;
 
     /**
      * 构造函数
@@ -193,7 +191,7 @@ public:
 
 class TaskExecutorGetter {
 public:
-    using Ptr = shared_ptr<TaskExecutorGetter>;
+    using Ptr = std::shared_ptr<TaskExecutorGetter>;
 
     virtual ~TaskExecutorGetter() = default;
 
@@ -202,6 +200,11 @@ public:
      * @return 任务执行器
      */
     virtual TaskExecutor::Ptr getExecutor() = 0;
+
+    /**
+     * 获取执行器个数
+     */
+    virtual size_t getExecutorSize() const = 0;
 };
 
 class TaskExecutorGetterImp : public TaskExecutorGetter {
@@ -219,26 +222,31 @@ public:
      * 获取所有线程的负载率
      * @return 所有线程的负载率
      */
-    vector<int> getExecutorLoad();
+    std::vector<int> getExecutorLoad();
 
     /**
      * 获取所有线程任务执行延时，单位毫秒
      * 通过此函数也可以大概知道线程负载情况
      * @return
      */
-    void getExecutorDelay(const function<void(const vector<int> &)> &callback);
+    void getExecutorDelay(const std::function<void(const std::vector<int> &)> &callback);
 
     /**
      * 遍历所有线程
      */
-    void for_each(const function<void(const TaskExecutor::Ptr &)> &cb);
+    void for_each(const std::function<void(const TaskExecutor::Ptr &)> &cb);
+
+    /**
+     * 获取线程数
+     */
+    size_t getExecutorSize() const override;
 
 protected:
-    size_t addPoller(const string &name, size_t size, int priority, bool register_thread);
+    size_t addPoller(const std::string &name, size_t size, int priority, bool register_thread);
 
 protected:
     size_t _thread_pos = 0;
-    vector<TaskExecutor::Ptr> _threads;
+    std::vector<TaskExecutor::Ptr> _threads;
 };
 
 }//toolkit

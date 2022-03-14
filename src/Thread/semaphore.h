@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -14,16 +14,14 @@
 /*
  * 目前发现信号量在32位的系统上有问题，
  * 休眠的线程无法被正常唤醒，先禁用之
- #if defined(__linux__)
+#if defined(__linux__)
 #include <semaphore.h>
 #define HAVE_SEM
 #endif //HAVE_SEM
 */
-#include <atomic>
+
 #include <mutex>
 #include <condition_variable>
-
-using namespace std;
 
 namespace toolkit {
 
@@ -49,7 +47,7 @@ public:
             sem_post(&_sem);
         }
 #else
-        unique_lock<recursive_mutex> lock(_mutex);
+        std::unique_lock<std::recursive_mutex> lock(_mutex);
         _count += n;
         if (n == 1) {
             _condition.notify_one();
@@ -57,14 +55,13 @@ public:
             _condition.notify_all();
         }
 #endif
-
     }
 
     void wait() {
 #if defined(HAVE_SEM)
         sem_wait(&_sem);
 #else
-        unique_lock<recursive_mutex> lock(_mutex);
+        std::unique_lock<std::recursive_mutex> lock(_mutex);
         while (_count == 0) {
             _condition.wait(lock);
         }
@@ -77,8 +74,8 @@ private:
     sem_t _sem;
 #else
     size_t _count;
-    recursive_mutex _mutex;
-    condition_variable_any _condition;
+    std::recursive_mutex _mutex;
+    std::condition_variable_any _condition;
 #endif
 };
 

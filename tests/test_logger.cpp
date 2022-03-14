@@ -1,7 +1,7 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include "Util/logger.h"
+#include "Network/Socket.h"
 using namespace std;
 using namespace toolkit;
 
@@ -67,5 +68,26 @@ int main() {
     LogI(1, "+", "2", '=', 3);
     LogW(1, "+", "2", '=', 3);
     LogE(1, "+", "2", '=', 3);
+
+
+    for (int i = 0; i < 2; ++i) {
+        DebugL << "this is a repeat 2 times log";
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        DebugL << "this is a repeat 3 times log";
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
+    for (int i = 0; i < 100; ++i) {
+        DebugL << "this is a repeat 100 log";
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
+    toolkit::SockException ex((ErrCode)1, "test");
+    DebugL << "sock exception: " << ex;
+
+    InfoL << "done!";
     return 0;
 }

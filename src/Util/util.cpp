@@ -1,46 +1,49 @@
 ﻿/*
  * Copyright (c) 2016 The ZLToolKit project authors. All Rights Reserved.
  *
- * This file is part of ZLToolKit(https://github.com/xia-chu/ZLToolKit).
+ * This file is part of ZLToolKit(https://github.com/ZLMediaKit/ZLToolKit).
  *
  * Use of this source code is governed by MIT license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#include <assert.h>
-#include <stdlib.h>
-#include <mutex>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <algorithm>
-#include <unordered_map>
 #include <random>
 
 #include "util.h"
+#include "File.h"
 #include "onceToken.h"
-#include "Util/File.h"
-#include "Util/logger.h"
-#include "Util/uv_errno.h"
+#include "logger.h"
+#include "uv_errno.h"
 #include "Network/sockutil.h"
 
 #if defined(_WIN32)
-#include <shlwapi.h>  
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <shlwapi.h>
 #pragma comment(lib, "shlwapi.lib")
 extern "C" const IMAGE_DOS_HEADER __ImageBase;
 #endif // defined(_WIN32)
 
 #if defined(__MACH__) || defined(__APPLE__)
-#include <mach/mach.h>
-#include <mach/mach_time.h>
+#include <limits.h>
 #include <mach-o/dyld.h> /* _NSGetExecutablePath */
-int uv_exepath(char* buffer, int *size) {
+
+int uv_exepath(char *buffer, int *size) {
     /* realpath(exepath) may be > PATH_MAX so double it to be on the safe side. */
     char abspath[PATH_MAX * 2 + 1];
     char exepath[PATH_MAX + 1];
     uint32_t exepath_size;
     size_t abspath_size;
 
-    if (buffer == NULL || size == NULL || *size == 0)
+    if (buffer == nullptr || size == nullptr || *size == 0)
         return -EINVAL;
 
     exepath_size = sizeof(exepath);
@@ -55,7 +58,7 @@ int uv_exepath(char* buffer, int *size) {
         return -EIO;
 
     *size -= 1;
-    if (*size > abspath_size)
+    if ((size_t) *size > abspath_size)
         *size = abspath_size;
 
     memcpy(buffer, abspath, *size);
@@ -63,6 +66,7 @@ int uv_exepath(char* buffer, int *size) {
 
     return 0;
 }
+
 #endif //defined(__MACH__) || defined(__APPLE__)
 
 using namespace std;
@@ -89,17 +93,17 @@ string makeRandStr(int sz, bool printable) {
 bool is_safe(uint8_t b) {
     return b >= ' ' && b < 128;
 }
+
 string hexdump(const void *buf, size_t len) {
     string ret("\r\n");
     char tmp[8];
-    const uint8_t *data = (const uint8_t *)buf;
+    const uint8_t *data = (const uint8_t *) buf;
     for (size_t i = 0; i < len; i += 16) {
         for (int j = 0; j < 16; ++j) {
             if (i + j < len) {
                 int sz = snprintf(tmp, sizeof(tmp), "%.2x ", data[i + j]);
                 ret.append(tmp, sz);
-            }
-            else {
+            } else {
                 int sz = snprintf(tmp, sizeof(tmp), "   ");
                 ret.append(tmp, sz);
             }
@@ -107,8 +111,7 @@ string hexdump(const void *buf, size_t len) {
         for (int j = 0; j < 16; ++j) {
             if (i + j < len) {
                 ret += (is_safe(data[i + j]) ? data[i + j] : '.');
-            }
-            else {
+            } else {
                 ret += (' ');
             }
         }
@@ -117,22 +120,22 @@ string hexdump(const void *buf, size_t len) {
     return ret;
 }
 
-string hexmem(const void* buf, size_t len) {
-	string ret;
-	char tmp[8];
-	const uint8_t* data = (const uint8_t*)buf;
-	for (size_t i = 0; i < len; ++i) {
-		int sz = sprintf(tmp, "%.2x ", data[i]);
-		ret.append(tmp, sz);
-	}
-	return ret;
+string hexmem(const void *buf, size_t len) {
+    string ret;
+    char tmp[8];
+    const uint8_t *data = (const uint8_t *) buf;
+    for (size_t i = 0; i < len; ++i) {
+        int sz = sprintf(tmp, "%.2x ", data[i]);
+        ret.append(tmp, sz);
+    }
+    return ret;
 }
 
 string exePath(bool isExe /*= true*/) {
-    char buffer[PATH_MAX * 2 + 1] = { 0 };
+    char buffer[PATH_MAX * 2 + 1] = {0};
     int n = -1;
 #if defined(_WIN32)
-    n = GetModuleFileNameA(isExe?NULL:(HINSTANCE)&__ImageBase, buffer, sizeof(buffer));
+    n = GetModuleFileNameA(isExe?nullptr:(HINSTANCE)&__ImageBase, buffer, sizeof(buffer));
 #elif defined(__MACH__) || defined(__APPLE__)
     n = sizeof(buffer);
     if (uv_exepath(buffer, &n) != 0) {
@@ -145,8 +148,7 @@ string exePath(bool isExe /*= true*/) {
     string filePath;
     if (n <= 0) {
         filePath = "./";
-    }
-    else {
+    } else {
         filePath = buffer;
     }
 
@@ -196,7 +198,7 @@ std::string strToUpper(std::string &&str) {
     return std::move(str);
 }
 
-vector<string> split(const string& s, const char *delim) {
+vector<string> split(const string &s, const char *delim) {
     vector<string> ret;
     size_t last = 0;
     auto index = s.find(delim, last);
@@ -213,7 +215,7 @@ vector<string> split(const string& s, const char *delim) {
     return ret;
 }
 
-#define TRIM(s,chars) \
+#define TRIM(s, chars) \
 do{ \
     string map(0xFF, '\0'); \
     for (auto &ch : chars) { \
@@ -224,10 +226,11 @@ do{ \
 }while(0);
 
 //去除前后的空格、回车符、制表符
-std::string& trim(std::string &s, const string &chars) {
+std::string &trim(std::string &s, const string &chars) {
     TRIM(s, chars);
     return s;
 }
+
 std::string trim(std::string &&s, const string &chars) {
     TRIM(s, chars);
     return std::move(s);
@@ -254,7 +257,7 @@ bool end_with(const string &str, const string &substr) {
     return pos != string::npos && pos == str.size() - substr.size();
 }
 
-bool isIP(const char *str){
+bool isIP(const char *str) {
     return INADDR_NONE != inet_addr(str);
 }
 
@@ -285,9 +288,6 @@ const char *strcasestr(const char *big, const char *little){
     return big + (pos - big_str.data());
 }
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 int vasprintf(char **strp, const char *fmt, va_list ap) {
     // _vscprintf tells you how big the buffer needs to be
     int len = _vscprintf(fmt, ap);
@@ -323,12 +323,13 @@ int vasprintf(char **strp, const char *fmt, va_list ap) {
 static inline uint64_t getCurrentMicrosecondOrigin() {
 #if !defined(_WIN32)
     struct timeval tv;
-    gettimeofday(&tv, NULL);
+    gettimeofday(&tv, nullptr);
     return tv.tv_sec * 1000000LL + tv.tv_usec;
 #else
     return  std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 #endif
 }
+
 static atomic<uint64_t> s_currentMicrosecond(0);
 static atomic<uint64_t> s_currentMillisecond(0);
 static atomic<uint64_t> s_currentMicrosecond_system(getCurrentMicrosecondOrigin());
@@ -355,7 +356,7 @@ static inline bool initMillisecondThread() {
                 microsecond += expired;
                 s_currentMicrosecond.store(microsecond, memory_order_release);
                 s_currentMillisecond.store(microsecond / 1000, memory_order_release);
-            } else if(expired != 0){
+            } else if (expired != 0) {
                 WarnL << "Stamp expired is not abnormal:" << expired;
             }
             //休眠0.5 ms
@@ -370,7 +371,7 @@ static inline bool initMillisecondThread() {
 
 uint64_t getCurrentMillisecond(bool system_time) {
     static bool flag = initMillisecondThread();
-    if(system_time){
+    if (system_time) {
         return s_currentMillisecond_system.load(memory_order_acquire);
     }
     return s_currentMillisecond.load(memory_order_acquire);
@@ -378,7 +379,7 @@ uint64_t getCurrentMillisecond(bool system_time) {
 
 uint64_t getCurrentMicrosecond(bool system_time) {
     static bool flag = initMillisecondThread();
-    if(system_time){
+    if (system_time) {
         return s_currentMicrosecond_system.load(memory_order_acquire);
     }
     return s_currentMicrosecond.load(memory_order_acquire);
@@ -386,7 +387,7 @@ uint64_t getCurrentMicrosecond(bool system_time) {
 
 string getTimeStr(const char *fmt, time_t time) {
     if (!time) {
-        time = ::time(NULL);
+        time = ::time(nullptr);
     }
     auto tm = getLocalTime(time);
     char buffer[64];
@@ -404,13 +405,24 @@ struct tm getLocalTime(time_t sec) {
     return tm;
 }
 
+//static thread_local string thread_name;
+
+static string limitString(const char *name, size_t max_size) {
+    string str = name;
+    if (str.size() + 1 > max_size) {
+        auto erased = str.size() + 1 - max_size + 3;
+        str.replace(5, erased, "...");
+    }
+    return str;
+}
+
 void setThreadName(const char *name) {
-#if defined(__linux) || defined(__linux__)
-    assert(strlen(name) < 16); // linux平台下线程名字长度需小于16
-    pthread_setname_np(pthread_self(), name);
+    assert(name);
+#if defined(__linux) || defined(__linux__) || defined(__MINGW32__)
+    pthread_setname_np(pthread_self(), limitString(name, 16).data());
 #elif defined(__MACH__) || defined(__APPLE__)
-    pthread_setname_np(name);
-#elif defined(_WIN32)
+    pthread_setname_np(limitString(name, 32).data());
+#elif defined(_MSC_VER)
     // SetThreadDescription was added in 1607 (aka RS1). Since we can't guarantee the user is running 1607 or later, we need to ask for the function from the kernel.
     using SetThreadDescriptionFunc = HRESULT(WINAPI * )(_In_ HANDLE hThread, _In_ PCWSTR lpThreadDescription);
     static auto setThreadDescription = reinterpret_cast<SetThreadDescriptionFunc>(::GetProcAddress(::GetModuleHandle("Kernel32.dll"), "SetThreadDescription"));
@@ -449,11 +461,13 @@ void setThreadName(const char *name) {
         } __except(GetExceptionCode() == MS_VC_EXCEPTION ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_EXECUTE_HANDLER) {
         }
     }
+#else
+    thread_name = name ? name : "";
 #endif
 }
 
 string getThreadName() {
-#if ((defined(__linux) || defined(__linux__)) && !defined(ANDROID)) || (defined(__MACH__) || defined(__APPLE__)) || (defined(ANDROID) && __ANDROID_API__ >= 26)
+#if ((defined(__linux) || defined(__linux__)) && !defined(ANDROID)) || (defined(__MACH__) || defined(__APPLE__)) || (defined(ANDROID) && __ANDROID_API__ >= 26) || defined(__MINGW32__)
     string ret;
     ret.resize(32);
     auto tid = pthread_self();
@@ -463,7 +477,7 @@ string getThreadName() {
         return ret;
     }
     return to_string((uint64_t) tid);
-#elif defined(_WIN32)
+#elif defined(_MSC_VER)
     using GetThreadDescriptionFunc = HRESULT(WINAPI * )(_In_ HANDLE hThread, _In_ PWSTR * ppszThreadDescription);
     static auto getThreadDescription = reinterpret_cast<GetThreadDescriptionFunc>(::GetProcAddress(::GetModuleHandleA("Kernel32.dll"), "GetThreadDescription"));
 
@@ -491,6 +505,9 @@ string getThreadName() {
         }
     }
 #else
+    if (!thread_name.empty()) {
+        return thread_name;
+    }
     std::ostringstream ss;
     ss << std::this_thread::get_id();
     return ss.str();
