@@ -1,8 +1,8 @@
 # 一个基于C++11简单易用的轻量级网络编程框架
 
-![](https://github.com/ZLMediaKit/ZLToolKit/actions/workflows/cmake.yml/badge.svg)
+![](https://github.com/ZLMediaKit/ZLToolKit/actions/workflows/linux.yml/badge.svg)
 ![](https://github.com/ZLMediaKit/ZLToolKit/actions/workflows/macos.yml/badge.svg)
-![](https://github.com/ZLMediaKit/ZLToolKit/actions/workflows/msvc-ci.yml/badge.svg)
+![](https://github.com/ZLMediaKit/ZLToolKit/actions/workflows/windows.yml/badge.svg)
 
 ## 项目特点
 - 基于C++11开发，避免使用裸指针，代码稳定可靠；同时跨平台移植简单方便，代码清晰简洁。
@@ -14,7 +14,7 @@
 ## 特性
 - 网络库
   - tcp/udp客户端，接口简单易用并且是线程安全的，用户不必关心具体的socket api操作。
-  - tcp服务器，使用非常简单，只要实现具体的tcp会话（TcpSession类）逻辑,使用模板的方式可以快速的构建高性能的服务器。
+  - tcp/udp服务器，使用非常简单，只要实现具体的tcp/udp会话（Session类）逻辑,使用模板的方式可以快速的构建高性能的服务器。
   - 对套接字多种操作的封装。
 - 线程库
   - 使用线程实现的简单易用的定时器。

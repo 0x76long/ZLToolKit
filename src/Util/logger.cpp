@@ -175,9 +175,9 @@ static inline const char *getFunctionName(const char *func) {
 #endif
 }
 
-LogContext::LogContext(LogLevel level, const char *file, const char *function, int line, const char *module_name)
+LogContext::LogContext(LogLevel level, const char *file, const char *function, int line, const char *module_name, const char *flag)
         : _level(level), _line(line), _file(getFileName(file)), _function(getFunctionName(function)),
-          _module_name(module_name) {
+          _module_name(module_name), _flag(flag) {
     gettimeofday(&_tv, nullptr);
     _thread_name = getThreadName();
 }
@@ -195,8 +195,8 @@ const string &LogContext::str() {
 
 static string s_module_name = exeName(false);
 
-LogContextCapture::LogContextCapture(Logger &logger, LogLevel level, const char *file, const char *function, int line) :
-        _ctx(new LogContext(level, file, function, line, s_module_name.c_str())), _logger(logger) {
+LogContextCapture::LogContextCapture(Logger &logger, LogLevel level, const char *file, const char *function, int line, const char *flag) :
+        _ctx(new LogContext(level, file, function, line, s_module_name.c_str(), flag)), _logger(logger) {
 }
 
 LogContextCapture::LogContextCapture(const LogContextCapture &that) : _ctx(that._ctx), _logger(that._logger) {
@@ -271,7 +271,7 @@ void EventChannel::write(const Logger &logger, const LogContextPtr &ctx) {
     if (_level > ctx->_level) {
         return;
     }
-    NoticeCenter::Instance().emitEvent(kBroadcastLogEvent, logger, ctx);
+    NOTICE_EMIT(BroadcastLogEventArgs, kBroadcastLogEvent, logger, ctx);
 }
 
 ///////////////////ConsoleChannel///////////////////
@@ -351,14 +351,20 @@ std::string LogChannel::printTime(const timeval &tv) {
     return buf;
 }
 
-void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr &ctx, bool enable_color,
-                        bool enable_detail) {
+#ifdef _WIN32
+#define printf_pid() GetCurrentProcessId()
+#else
+#define printf_pid() getpid()
+#endif
+
+void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr &ctx, bool enable_color, bool enable_detail) {
     if (!enable_detail && ctx->str().empty()) {
-        //没有任何信息打印
+        // 没有任何信息打印
         return;
     }
 
     if (enable_color) {
+        // color console start
 #ifdef _WIN32
         SetConsoleColor(LOG_CONST_TABLE[ctx->_level][1]);
 #else
@@ -366,6 +372,7 @@ void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr 
 #endif
     }
 
+    // print log time and level
 #ifdef _WIN32
     ost << printTime(ctx->_tv) << " " << (char)LOG_CONST_TABLE[ctx->_level][2] << " ";
 #else
@@ -373,17 +380,19 @@ void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr 
 #endif
 
     if (enable_detail) {
-#if defined(_WIN32)
-        ost << ctx->_module_name <<"[" << GetCurrentProcessId() << "-" << ctx->_thread_name;
-#else
-        ost << logger.getName() << "[" << getpid() << "-" << ctx->_thread_name;
-#endif
-        ost << "] " << ctx->_file << ":" << ctx->_line << " " << ctx->_function << " | ";
+        // tag or process name
+        ost << "[" << (!ctx->_flag.empty() ? ctx->_flag : logger.getName()) << "] ";
+        // pid and thread_name
+        ost << "[" << printf_pid() << "-" << ctx->_thread_name << "] ";
+        // source file location
+        ost << ctx->_file << ":" << ctx->_line << " " << ctx->_function << " | ";
     }
 
+    // log content
     ost << ctx->str();
 
     if (enable_color) {
+        // color console end
 #ifdef _WIN32
         SetConsoleColor(CLEAR_COLOR);
 #else
@@ -392,8 +401,11 @@ void LogChannel::format(const Logger &logger, ostream &ost, const LogContextPtr 
     }
 
     if (ctx->_repeat > 1) {
+        // log repeated
         ost << "\r\n    Last message repeated " << ctx->_repeat << " times";
     }
+
+    // flush log and new line
     ost << endl;
 }
 
@@ -428,7 +440,7 @@ const string &FileChannelBase::path() const {
 bool FileChannelBase::open() {
     // Ensure a path was set
     if (_path.empty()) {
-        throw runtime_error("Log file path must be set.");
+        throw runtime_error("Log file path must be set");
     }
     // Open the file stream
     _fstream.close();

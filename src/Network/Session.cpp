@@ -15,30 +15,26 @@ using namespace std;
 
 namespace toolkit {
 
-Session::Session(const Socket::Ptr &sock) : SocketHelper(sock) {}
-Session::~Session() = default;
+class TcpSession : public Session {};
+class UdpSession : public Session {};
 
-static atomic<uint64_t> s_session_index{0};
+StatisticImp(UdpSession)
+StatisticImp(TcpSession)
+
+Session::Session(const Socket::Ptr &sock) : SocketHelper(sock) {
+    if (sock->sockType() == SockNum::Sock_TCP) {
+        _statistic_tcp.reset(new ObjectStatistic<TcpSession>);
+    } else {
+        _statistic_udp.reset(new ObjectStatistic<UdpSession>);
+    }
+}
 
 string Session::getIdentifier() const {
     if (_id.empty()) {
+        static atomic<uint64_t> s_session_index{0};
         _id = to_string(++s_session_index) + '-' + to_string(getSock()->rawFD());
     }
     return _id;
 }
-
-void Session::safeShutdown(const SockException &ex) {
-    std::weak_ptr<Session> weakSelf = shared_from_this();
-    async_first([weakSelf,ex](){
-        auto strongSelf = weakSelf.lock();
-        if (strongSelf) {
-            strongSelf->shutdown(ex);
-        }
-    });
-}
-
-StatisticImp(Session)
-StatisticImp(UdpSession)
-StatisticImp(TcpSession)
 
 } // namespace toolkit

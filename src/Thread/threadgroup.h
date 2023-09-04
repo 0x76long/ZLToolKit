@@ -11,6 +11,7 @@
 #ifndef THREADGROUP_H_
 #define THREADGROUP_H_
 
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 
@@ -61,7 +62,7 @@ public:
 
     void join_all() {
         if (is_this_thread_in()) {
-            throw std::runtime_error("thread_group: trying joining itself");
+            throw std::runtime_error("Trying joining itself in thread_group");
         }
         for (auto &it : _threads) {
             if (it.second->joinable()) {

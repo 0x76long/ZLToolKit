@@ -39,14 +39,14 @@ namespace toolkit {
 #ifndef socklen_t
 #define socklen_t int
 #endif //!socklen_t
-#ifndef SHUT_RDWR
-#define SHUT_RDWR 2
-#endif //!SHUT_RDWR
 int ioctl(int fd, long cmd, u_long *ptr);
 int close(int fd);
 #endif // defined(_WIN32)
 
 #define SOCKET_DEFAULT_BUF_SIZE (256 * 1024)
+#define TCP_KEEPALIVE_INTERVAL 30
+#define TCP_KEEPALIVE_PROBE_TIMES 9
+#define TCP_KEEPALIVE_TIME 120
 
 //套接字工具类，封装了socket、网络的一些基本操作
 class SockUtil {
@@ -148,9 +148,12 @@ public:
      * 是否开启TCP KeepAlive特性
      * @param fd socket fd号
      * @param on 是否开启该特性
+     * @param idle keepalive空闲时间
+     * @param interval keepalive探测时间间隔
+     * @param times keepalive探测次数
      * @return 0代表成功，-1为失败
      */
-    static int setKeepAlive(int fd, bool on = true);
+    static int setKeepAlive(int fd, bool on = true, int interval = TCP_KEEPALIVE_INTERVAL, int idle = TCP_KEEPALIVE_TIME, int times = TCP_KEEPALIVE_PROBE_TIMES);
 
     /**
      * 是否开启FD_CLOEXEC特性(多进程相关)
@@ -282,6 +285,7 @@ public:
      */
     static uint16_t get_peer_port(int sock);
 
+    static bool support_ipv6();
     /**
      * 线程安全的in_addr转ip字符串
      */
@@ -290,6 +294,9 @@ public:
     static std::string inet_ntoa(const struct sockaddr *addr);
     static uint16_t inet_port(const struct sockaddr *addr);
     static struct sockaddr_storage make_sockaddr(const char *ip, uint16_t port);
+    static socklen_t get_sock_len(const struct sockaddr *addr);
+    static bool get_sock_local_addr(int fd, struct sockaddr_storage &addr);
+    static bool get_sock_peer_addr(int fd, struct sockaddr_storage &addr);
 
     /**
      * 获取网卡ip

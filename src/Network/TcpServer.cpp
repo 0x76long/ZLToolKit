@@ -21,23 +21,32 @@ StatisticImp(TcpServer)
 
 TcpServer::TcpServer(const EventPoller::Ptr &poller) : Server(poller) {
     setOnCreateSocket(nullptr);
+}
+
+void TcpServer::setupEvent() {
     _socket = createSocket(_poller);
-    _socket->setOnBeforeAccept([this](const EventPoller::Ptr &poller) {
-        return onBeforeAcceptConnection(poller);
+    weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
+    _socket->setOnBeforeAccept([weak_self](const EventPoller::Ptr &poller) -> Socket::Ptr {
+        if (auto strong_self = weak_self.lock()) {
+            return strong_self->onBeforeAcceptConnection(poller);
+        }
+        return nullptr;
     });
-    _socket->setOnAccept([this](Socket::Ptr &sock, shared_ptr<void> &complete) {
-        auto ptr = sock->getPoller().get();
-        auto server = getServer(ptr);
-        ptr->async([server, sock, complete]() {
-            //该tcp客户端派发给对应线程的TcpServer服务器
-            server->onAcceptConnection(sock);
-        });
+    _socket->setOnAccept([weak_self](Socket::Ptr &sock, shared_ptr<void> &complete) {
+        if (auto strong_self = weak_self.lock()) {
+            auto ptr = sock->getPoller().get();
+            auto server = strong_self->getServer(ptr);
+            ptr->async([server, sock, complete]() {
+                //该tcp客户端派发给对应线程的TcpServer服务器
+                server->onAcceptConnection(sock);
+            });
+        }
     });
 }
 
 TcpServer::~TcpServer() {
-    if (!_parent && _socket->rawFD() != -1) {
-        InfoL << "close tcp server [" << _socket->get_local_ip() << "]:" << _socket->get_local_port();
+    if (_main_server && _socket && _socket->rawFD() != -1) {
+        InfoL << "Close tcp server [" << _socket->get_local_ip() << "]: " << _socket->get_local_port();
     }
     _timer.reset();
     //先关闭socket监听，防止收到新的连接
@@ -78,12 +87,14 @@ Socket::Ptr TcpServer::onBeforeAcceptConnection(const EventPoller::Ptr &poller) 
 
 void TcpServer::cloneFrom(const TcpServer &that) {
     if (!that._socket) {
-        throw std::invalid_argument("TcpServer::cloneFrom other with null socket!");
+        throw std::invalid_argument("TcpServer::cloneFrom other with null socket");
     }
+    setupEvent();
+    _main_server = false;
     _on_create_socket = that._on_create_socket;
     _session_alloc = that._session_alloc;
-    _socket->cloneFromListenSocket(*(that._socket));
-    weak_ptr<TcpServer> weak_self = std::dynamic_pointer_cast<TcpServer>(shared_from_this());
+    _socket->cloneSocket(*(that._socket));
+    weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
     _timer = std::make_shared<Timer>(2.0f, [weak_self]() -> bool {
         auto strong_self = weak_self.lock();
         if (!strong_self) {
@@ -93,17 +104,17 @@ void TcpServer::cloneFrom(const TcpServer &that) {
         return true;
     }, _poller);
     this->mINI::operator=(that);
-    _parent = &that;
+    _parent = static_pointer_cast<TcpServer>(const_cast<TcpServer &>(that).shared_from_this());
 }
 
 // 接收到客户端连接请求
-void TcpServer::onAcceptConnection(const Socket::Ptr &sock) {
+Session::Ptr TcpServer::onAcceptConnection(const Socket::Ptr &sock) {
     assert(_poller->isCurrentThread());
-    weak_ptr<TcpServer> weak_self = std::dynamic_pointer_cast<TcpServer>(shared_from_this());
-    //创建一个TcpSession;这里实现创建不同的服务会话实例
-    auto helper = _session_alloc(std::dynamic_pointer_cast<TcpServer>(shared_from_this()), sock);
+    weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
+    //创建一个Session;这里实现创建不同的服务会话实例
+    auto helper = _session_alloc(std::static_pointer_cast<TcpServer>(shared_from_this()), sock);
     auto session = helper->session();
-    //把本服务器的配置传递给TcpSession
+    //把本服务器的配置传递给Session
     session->attachServer(*this);
 
     //_session_map::emplace肯定能成功
@@ -128,8 +139,9 @@ void TcpServer::onAcceptConnection(const Socket::Ptr &sock) {
     });
 
     SessionHelper *ptr = helper.get();
+    auto cls = ptr->className();
     //会话接收到错误事件
-    sock->setOnErr([weak_self, weak_session, ptr](const SockException &err) {
+    sock->setOnErr([weak_self, weak_session, ptr, cls](const SockException &err) {
         //在本函数作用域结束时移除会话对象
         //目的是确保移除会话前执行其onError函数
         //同时避免其onError函数抛异常时没有移除会话对象
@@ -159,20 +171,23 @@ void TcpServer::onAcceptConnection(const Socket::Ptr &sock) {
         auto strong_session = weak_session.lock();
         if (strong_session) {
             //触发onError事件回调
+            TraceP(strong_session) << cls << " on err: " << err;
             strong_session->onError(err);
         }
     });
+    return session;
 }
 
 void TcpServer::start_l(uint16_t port, const std::string &host, uint32_t backlog) {
+    setupEvent();
     if (!_socket->listen(port, host.c_str(), backlog)) {
         //创建tcp监听失败，可能是由于端口占用或权限问题
-        string err = (StrPrinter << "listen on " << host << ":" << port << " failed:" << get_uv_errmsg(true));
+        string err = (StrPrinter << "Listen on " << host << " " << port << " failed: " << get_uv_errmsg(true));
         throw std::runtime_error(err);
     }
 
     //新建一个定时器定时管理这些tcp会话
-    weak_ptr<TcpServer> weak_self = std::dynamic_pointer_cast<TcpServer>(shared_from_this());
+    weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
     _timer = std::make_shared<Timer>(2.0f, [weak_self]() -> bool {
         auto strong_self = weak_self.lock();
         if (!strong_self) {
@@ -183,8 +198,8 @@ void TcpServer::start_l(uint16_t port, const std::string &host, uint32_t backlog
     }, _poller);
 
     EventPollerPool::Instance().for_each([&](const TaskExecutor::Ptr &executor) {
-        EventPoller::Ptr poller = dynamic_pointer_cast<EventPoller>(executor);
-        if (poller == _poller || !poller) {
+        EventPoller::Ptr poller = static_pointer_cast<EventPoller>(executor);
+        if (poller == _poller) {
             return;
         }
         auto &serverRef = _cloned_server[poller.get()];
@@ -196,7 +211,7 @@ void TcpServer::start_l(uint16_t port, const std::string &host, uint32_t backlog
         }
     });
 
-    InfoL << "TCP Server listening on [" << host << "]:" << port;
+    InfoL << "TCP server listening on [" << host << "]: " << port;
 }
 
 void TcpServer::onManagerSession() {
@@ -223,17 +238,20 @@ Socket::Ptr TcpServer::createSocket(const EventPoller::Ptr &poller) {
 }
 
 TcpServer::Ptr TcpServer::getServer(const EventPoller *poller) const {
-    auto &ref = _parent ? _parent->_cloned_server : _cloned_server;
+    auto parent = _parent.lock();
+    auto &ref = parent ? parent->_cloned_server : _cloned_server;
     auto it = ref.find(poller);
     if (it != ref.end()) {
         //派发到cloned server
         return it->second;
     }
     //派发到parent server
-    return static_pointer_cast<TcpServer>(_parent ? const_cast<TcpServer *>(_parent)->shared_from_this() :
-                                          const_cast<TcpServer *>(this)->shared_from_this());
+    return static_pointer_cast<TcpServer>(parent ? parent : const_cast<TcpServer *>(this)->shared_from_this());
 }
 
+Session::Ptr TcpServer::createSession(const Socket::Ptr &sock) {
+    return getServer(sock->getPoller().get())->onAcceptConnection(sock);
+}
 
 } /* namespace toolkit */
 

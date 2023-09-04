@@ -19,7 +19,7 @@ using namespace std;
 #define checkFD(fd) \
     if (fd == -1) { \
         clearFD(); \
-        throw runtime_error(StrPrinter << "create windows pipe failed:" << get_uv_errmsg());\
+        throw runtime_error(StrPrinter << "Create windows pipe failed: " << get_uv_errmsg());\
     }
 
 #define closeFD(fd) \
@@ -31,12 +31,18 @@ using namespace std;
 namespace toolkit {
 
 PipeWrap::PipeWrap() {
+    reOpen();
+}
+
+void PipeWrap::reOpen() {
+    clearFD();
 #if defined(_WIN32)
-    auto listener_fd = SockUtil::listen(0, "127.0.0.1");
+    const char *localip = SockUtil::support_ipv6() ? "::1" : "127.0.0.1";
+    auto listener_fd = SockUtil::listen(0, localip);
     checkFD(listener_fd)
     SockUtil::setNoBlocked(listener_fd,false);
     auto localPort = SockUtil::get_local_port(listener_fd);
-    _pipe_fd[1] = SockUtil::connect("127.0.0.1", localPort,false);
+    _pipe_fd[1] = SockUtil::connect(localip, localPort,false);
     checkFD(_pipe_fd[1])
     _pipe_fd[0] = (int)accept(listener_fd, nullptr, nullptr);
     checkFD(_pipe_fd[0])
@@ -45,9 +51,9 @@ PipeWrap::PipeWrap() {
     close(listener_fd);
 #else
     if (pipe(_pipe_fd) == -1) {
-        throw runtime_error(StrPrinter << "create posix pipe failed:" << get_uv_errmsg());
+        throw runtime_error(StrPrinter << "Create posix pipe failed: " << get_uv_errmsg());
     }
-#endif // defined(_WIN32)	
+#endif // defined(_WIN32)
     SockUtil::setNoBlocked(_pipe_fd[0], true);
     SockUtil::setNoBlocked(_pipe_fd[1], false);
     SockUtil::setCloExec(_pipe_fd[0]);

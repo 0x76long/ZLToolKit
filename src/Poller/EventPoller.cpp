@@ -13,6 +13,7 @@
 #include "Util/util.h"
 #include "Util/uv_errno.h"
 #include "Util/TimeTicker.h"
+#include "Util/NoticeCenter.h"
 #include "Network/sockutil.h"
 
 #if defined(HAS_EPOLL)
@@ -48,25 +49,27 @@ EventPoller &EventPoller::Instance() {
     return *(EventPollerPool::Instance().getFirstPoller());
 }
 
-EventPoller::EventPoller(ThreadPool::Priority priority) {
-    _priority = priority;
+void EventPoller::addEventPipe() {
     SockUtil::setNoBlocked(_pipe.readFD());
     SockUtil::setNoBlocked(_pipe.writeFD());
 
+    // 添加内部管道事件
+    if (addEvent(_pipe.readFD(), EventPoller::Event_Read, [this](int event) { onPipeEvent(); }) == -1) {
+        throw std::runtime_error("Add pipe fd to poller failed");
+    }
+}
+
+EventPoller::EventPoller(std::string name) {
+    _name = std::move(name);
 #if defined(HAS_EPOLL)
     _epoll_fd = epoll_create(EPOLL_SIZE);
     if (_epoll_fd == -1) {
-        throw runtime_error(StrPrinter << "创建epoll文件描述符失败:" << get_uv_errmsg());
+        throw runtime_error(StrPrinter << "Create epoll fd failed: " << get_uv_errmsg());
     }
     SockUtil::setCloExec(_epoll_fd);
 #endif //HAS_EPOLL
     _logger = Logger::Instance().shared_from_this();
-    _loop_thread_id = this_thread::get_id();
-
-    //添加内部管道事件
-    if (addEvent(_pipe.readFD(), Event_Read, [this](int event) { onPipeEvent(); }) == -1) {
-        throw std::runtime_error("epoll添加管道失败");
-    }
+    addEventPipe();
 }
 
 void EventPoller::shutdown() {
@@ -84,7 +87,6 @@ void EventPoller::shutdown() {
 
 EventPoller::~EventPoller() {
     shutdown();
-    wait();
 #if defined(HAS_EPOLL)
     if (_epoll_fd != -1) {
         close(_epoll_fd);
@@ -92,7 +94,6 @@ EventPoller::~EventPoller() {
     }
 #endif //defined(HAS_EPOLL)
     //退出前清理管道中的数据
-    _loop_thread_id = this_thread::get_id();
     onPipeEvent();
     InfoL << this;
 }
@@ -100,7 +101,7 @@ EventPoller::~EventPoller() {
 int EventPoller::addEvent(int fd, int event, PollEventCB cb) {
     TimeTicker();
     if (!cb) {
-        WarnL << "PollEventCB 为空!";
+        WarnL << "PollEventCB is empty";
         return -1;
     }
 
@@ -118,7 +119,7 @@ int EventPoller::addEvent(int fd, int event, PollEventCB cb) {
 #ifndef _WIN32
         //win32平台，socket套接字不等于文件描述符，所以可能不适用这个限制
         if (fd >= FD_SETSIZE || _event_map.size() >= FD_SETSIZE) {
-            WarnL << "select最多监听" << FD_SETSIZE << "个文件描述符";
+            WarnL << "select() can not watch fd bigger than " << FD_SETSIZE;
             return -1;
         }
 #endif
@@ -213,18 +214,26 @@ Task::Ptr EventPoller::async_l(TaskIn task, bool may_sync, bool first) {
 }
 
 bool EventPoller::isCurrentThread() {
-    return _loop_thread_id == this_thread::get_id();
+    return !_loop_thread || _loop_thread->get_id() == this_thread::get_id();
 }
 
 inline void EventPoller::onPipeEvent() {
     char buf[1024];
     int err = 0;
-    do {
-        if (_pipe.read(buf, sizeof(buf)) > 0) {
+    while (true) {
+        if ((err = _pipe.read(buf, sizeof(buf))) > 0) {
+            // 读到管道数据,继续读,直到读空为止
             continue;
         }
-        err = get_uv_error(true);
-    } while (err != UV_EAGAIN);
+        if (err == 0 || get_uv_error(true) != UV_EAGAIN) {
+            // 收到eof或非EAGAIN(无更多数据)错误,说明管道无效了,重新打开管道
+            ErrorL << "Invalid pipe fd of event poller, reopen it";
+            delEvent(_pipe.readFD());
+            _pipe.reOpen();
+            addEventPipe();
+        }
+        break;
+    }
 
     decltype(_list_task) _list_swap;
     {
@@ -238,13 +247,9 @@ inline void EventPoller::onPipeEvent() {
         } catch (ExitException &) {
             _exit_flag = true;
         } catch (std::exception &ex) {
-            ErrorL << "EventPoller执行异步任务捕获到异常:" << ex.what();
+            ErrorL << "Exception occurred when do async task: " << ex.what();
         }
     });
-}
-
-void EventPoller::wait() {
-    lock_guard<mutex> lck(_mtx_running);
 }
 
 BufferRaw::Ptr EventPoller::getSharedBuffer() {
@@ -258,8 +263,12 @@ BufferRaw::Ptr EventPoller::getSharedBuffer() {
     return ret;
 }
 
-const thread::id &EventPoller::getThreadId() const {
-    return _loop_thread_id;
+thread::id EventPoller::getThreadId() const {
+    return _loop_thread ? _loop_thread->get_id() : thread::id();
+}
+
+const std::string& EventPoller::getThreadName() const {
+    return _name;
 }
 
 static thread_local std::weak_ptr<EventPoller> s_current_poller;
@@ -271,9 +280,6 @@ EventPoller::Ptr EventPoller::getCurrentPoller() {
 
 void EventPoller::runLoop(bool blocked, bool ref_self) {
     if (blocked) {
-        ThreadPool::setPriority(_priority);
-        lock_guard<mutex> lck(_mtx_running);
-        _loop_thread_id = this_thread::get_id();
         if (ref_self) {
             s_current_poller = shared_from_this();
         }
@@ -303,7 +309,7 @@ void EventPoller::runLoop(bool blocked, bool ref_self) {
                 try {
                     (*cb)(toPoller(ev.events));
                 } catch (std::exception &ex) {
-                    ErrorL << "EventPoller执行事件回调捕获到异常:" << ex.what();
+                    ErrorL << "Exception occurred when do event task: " << ex.what();
                 }
             }
         }
@@ -367,7 +373,7 @@ void EventPoller::runLoop(bool blocked, bool ref_self) {
                 try {
                     record->call_back(record->attach);
                 } catch (std::exception &ex) {
-                    ErrorL << "EventPoller执行事件回调捕获到异常:" << ex.what();
+                    ErrorL << "Exception occurred when do event task: " << ex.what();
                 }
             });
             callback_list.clear();
@@ -392,7 +398,7 @@ uint64_t EventPoller::flushDelayTask(uint64_t now_time) {
                 _delay_task_map.emplace(next_delay + now_time, std::move(it->second));
             }
         } catch (std::exception &ex) {
-            ErrorL << "EventPoller执行延时任务捕获到异常:" << ex.what();
+            ErrorL << "Exception occurred when do delay task: " << ex.what();
         }
     }
 
@@ -436,11 +442,12 @@ EventPoller::DelayTask::Ptr EventPoller::doDelayTask(uint64_t delay_ms, function
 ///////////////////////////////////////////////
 
 static size_t s_pool_size = 0;
+static bool s_enable_cpu_affinity = true;
 
 INSTANCE_IMP(EventPollerPool)
 
 EventPoller::Ptr EventPollerPool::getFirstPoller() {
-    return dynamic_pointer_cast<EventPoller>(_threads.front());
+    return static_pointer_cast<EventPoller>(_threads.front());
 }
 
 EventPoller::Ptr EventPollerPool::getPoller(bool prefer_current_thread) {
@@ -448,20 +455,27 @@ EventPoller::Ptr EventPollerPool::getPoller(bool prefer_current_thread) {
     if (prefer_current_thread && _prefer_current_thread && poller) {
         return poller;
     }
-    return dynamic_pointer_cast<EventPoller>(getExecutor());
+    return static_pointer_cast<EventPoller>(getExecutor());
 }
 
 void EventPollerPool::preferCurrentThread(bool flag) {
     _prefer_current_thread = flag;
 }
 
+const std::string EventPollerPool::kOnStarted = "kBroadcastEventPollerPoolStarted";
+
 EventPollerPool::EventPollerPool() {
-    auto size = addPoller("event poller", s_pool_size, ThreadPool::PRIORITY_HIGHEST, true);
-    InfoL << "创建EventPoller个数:" << size;
+    auto size = addPoller("event poller", s_pool_size, ThreadPool::PRIORITY_HIGHEST, true, s_enable_cpu_affinity);
+    NOTICE_EMIT(EventPollerPoolOnStartedArgs, kOnStarted, *this, size);
+    InfoL << "EventPoller created size: " << size;
 }
 
 void EventPollerPool::setPoolSize(size_t size) {
     s_pool_size = size;
+}
+
+void EventPollerPool::enableCpuAffinity(bool enable) {
+    s_enable_cpu_affinity = enable;
 }
 
 }  // namespace toolkit
