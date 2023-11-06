@@ -93,7 +93,6 @@ void TcpServer::cloneFrom(const TcpServer &that) {
     _main_server = false;
     _on_create_socket = that._on_create_socket;
     _session_alloc = that._session_alloc;
-    _socket->cloneSocket(*(that._socket));
     weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
     _timer = std::make_shared<Timer>(2.0f, [weak_self]() -> bool {
         auto strong_self = weak_self.lock();
@@ -180,11 +179,6 @@ Session::Ptr TcpServer::onAcceptConnection(const Socket::Ptr &sock) {
 
 void TcpServer::start_l(uint16_t port, const std::string &host, uint32_t backlog) {
     setupEvent();
-    if (!_socket->listen(port, host.c_str(), backlog)) {
-        //创建tcp监听失败，可能是由于端口占用或权限问题
-        string err = (StrPrinter << "Listen on " << host << " " << port << " failed: " << get_uv_errmsg(true));
-        throw std::runtime_error(err);
-    }
 
     //新建一个定时器定时管理这些tcp会话
     weak_ptr<TcpServer> weak_self = std::static_pointer_cast<TcpServer>(shared_from_this());
@@ -210,6 +204,16 @@ void TcpServer::start_l(uint16_t port, const std::string &host, uint32_t backlog
             serverRef->cloneFrom(*this);
         }
     });
+
+    if (!_socket->listen(port, host.c_str(), backlog)) {
+        // 创建tcp监听失败，可能是由于端口占用或权限问题
+        string err = (StrPrinter << "Listen on " << host << " " << port << " failed: " << get_uv_errmsg(true));
+        throw std::runtime_error(err);
+    }
+    for (auto &pr: _cloned_server) {
+        // 启动子Server
+        pr.second->_socket->cloneSocket(*_socket);
+    }
 
     InfoL << "TCP server listening on [" << host << "]: " << port;
 }
