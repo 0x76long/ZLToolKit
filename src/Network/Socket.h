@@ -193,9 +193,9 @@ public:
      
      * [AUTO-TRANSLATED:2eb468c4]
      */
-    SockFD(SockNum::Ptr num, const EventPoller::Ptr &poller) {
+    SockFD(SockNum::Ptr num, EventPoller::Ptr poller) {
         _num = std::move(num);
-        _poller = poller;
+        _poller = std::move(poller);
     }
 
     /**
@@ -208,9 +208,9 @@ public:
      
      * [AUTO-TRANSLATED:51fca132]
      */
-    SockFD(const SockFD &that, const EventPoller::Ptr &poller) {
+    SockFD(const SockFD &that, EventPoller::Ptr poller) {
         _num = that._num;
-        _poller = poller;
+        _poller = std::move(poller);
         if (_poller == that._poller) {
             throw std::invalid_argument("Copy a SockFD with same poller");
         }
@@ -412,7 +412,7 @@ public:
      * 从另外一个Socket克隆
      * 目的是一个socket可以被多个poller对象监听，提高性能或实现Socket归属线程的迁移
      * @param other 原始的socket对象
-     * @return 是否成功
+     * @return 是否成功, 析构后添加poller事件监听
      * Clone from another Socket
      * The purpose is to allow a socket to be listened to by multiple poller objects, improving performance or implementing socket migration between threads
      * @param other Original socket object
@@ -420,7 +420,13 @@ public:
      
      * [AUTO-TRANSLATED:b3669f71]
      */
-    bool cloneSocket(const Socket &other);
+    std::shared_ptr<void> cloneSocket(const Socket &other);
+
+    /**
+     * 切换poller线程，注意只能在onAccept之前调用
+     * @param poller 新线程
+     */
+    void moveTo(EventPoller::Ptr poller);
 
     ////////////设置事件回调////////////  [AUTO-TRANSLATED:0bfc62ce]
     //////////// Set event callbacks ////////////
@@ -709,6 +715,8 @@ public:
     std::string get_peer_ip() override;
     uint16_t get_peer_port() override;
     std::string getIdentifier() const override;
+    const sockaddr *get_peer_addr();
+    const sockaddr *get_local_addr();
 
 private:
     Socket(EventPoller::Ptr poller, bool enable_mutex = true);
@@ -826,6 +834,7 @@ public:
     SockSender() = default;
     virtual ~SockSender() = default;
     virtual ssize_t send(Buffer::Ptr buf) = 0;
+    virtual ssize_t sendto(Buffer::Ptr buf, struct sockaddr *addr = nullptr, socklen_t addr_len = 0) = 0;
     virtual void shutdown(const SockException &ex = SockException(Err_shutdown, "self shutdown")) = 0;
 
     //发送char *  [AUTO-TRANSLATED:ab84aeb3]
@@ -946,6 +955,8 @@ public:
     uint16_t get_local_port() override;
     std::string get_peer_ip() override;
     uint16_t get_peer_port() override;
+    const sockaddr *get_peer_addr();
+    const sockaddr *get_local_addr();
 
     ///////////////////// TaskExecutorInterface override /////////////////////
     /**
@@ -978,6 +989,11 @@ public:
      * [AUTO-TRANSLATED:6a7a5178]
      */
     ssize_t send(Buffer::Ptr buf) override;
+	
+    /**
+     * 统一发送数据的出口
+     */
+    ssize_t sendto(Buffer::Ptr buf, struct sockaddr *addr = nullptr, socklen_t addr_len = 0) override;
 
     /**
      * 触发onErr事件

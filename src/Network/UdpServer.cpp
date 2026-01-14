@@ -136,13 +136,16 @@ void UdpServer::cloneFrom(const UdpServer &that) {
     if (!that._socket) {
         throw std::invalid_argument("UdpServer::cloneFrom other with null socket");
     }
+    // 将socket的创建回调复制前置, 确保所有的socket都可以通过上层创建
+    _on_create_socket = that._on_create_socket;
+    
     setupEvent();
     _cloned = true;
     // clone callbacks
-    _on_create_socket = that._on_create_socket;
     _session_alloc = that._session_alloc;
     _session_mutex = that._session_mutex;
     _session_map = that._session_map;
+    _multi_poller = that._multi_poller;
     // clone properties
     this->mINI::operator=(that);
 }
@@ -179,7 +182,9 @@ void UdpServer::onRead_l(bool is_server_fd, const UdpServer::PeerIdType &id, Buf
         } else {
             //数据漂移到其他线程，需要先切换线程  [AUTO-TRANSLATED:15235f6f]
             //Data migration to another thread requires switching threads first
+#if !defined(_WIN32)
             WarnL << "UDP packet incoming from other thread";
+#endif
             std::weak_ptr<SessionHelper> weak_helper = helper;
             //由于socket读buffer是该线程上所有socket共享复用的，所以不能跨线程使用，必须先转移走  [AUTO-TRANSLATED:1134538b]
             //Since the socket read buffer is shared and reused by all sockets on this thread, it cannot be used across threads and must be transferred first
@@ -191,7 +196,7 @@ void UdpServer::onRead_l(bool is_server_fd, const UdpServer::PeerIdType &id, Buf
             });
         }
 
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) && !defined(_WIN32)
         if (!is_new) {
             TraceL << "UDP packet incoming from " << (is_server_fd ? "server fd" : "other peer fd");
         }
