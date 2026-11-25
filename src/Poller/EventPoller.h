@@ -253,6 +253,13 @@ private:
     void shutdown();
 
     /**
+     * shared_ptr的删除器:若最后一个引用是在本对象自己的轮询线程上释放的,则推迟销毁
+     * The shared_ptr deleter: destruction is deferred when the last reference goes away on
+     * this object's own polling thread
+     */
+    static void destroy(EventPoller *ptr);
+
+    /**
      * 刷新延时任务
      * Refresh delayed tasks
      * [AUTO-TRANSLATED:88104b90]
@@ -280,7 +287,9 @@ private:
     // 标记loop线程是否退出  [AUTO-TRANSLATED:98250f84]
     // 标记loop线程是否退出
     // Mark the loop thread as exited
-    bool _exit_flag;
+    // 初值为true:循环尚未开始时即处于"已退出"状态
+    // Initially true: before the loop starts it already is in the exited state
+    bool _exit_flag = true;
     // 统计监听了多少个fd
     size_t _fd_count = 0;
     // 线程名  [AUTO-TRANSLATED:f1d62d9f]
@@ -295,6 +304,10 @@ private:
     // 执行事件循环的线程
     // Thread that executes the event loop
     std::thread *_loop_thread = nullptr;
+    // 最后一个引用已在轮询线程上释放,待runLoop返回后销毁;只在轮询线程上读写
+    // The last reference went away on the polling thread, destroy once runLoop has returned;
+    // only touched on the polling thread
+    bool _pending_delete = false;
     // 通知事件循环的线程已启动  [AUTO-TRANSLATED:61f478cf]
     // 通知事件循环的线程已启动
     // Notify the event loop thread that it has started

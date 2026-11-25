@@ -391,29 +391,22 @@ int vasprintf(char **strp, const char *fmt, va_list ap) {
 
 #endif //WIN32
 
-static long s_gmtoff = 0; //时间差
+//时区表在静态初始化阶段建好：此时尚未进入main()，通常只有一个线程，也早于任何fork()。
+//这是getGMTOff()/getLocalTime()唯一一次经过libc时区接口(它们会加锁)的地方，之后二者只查表，
+//不加锁、不调用libc，夏令时切换的那一刻也是如此。早于此处初始化的调用(其它编译单元的全局对象
+//构造期间)得到的是表里的UTC占位项
+//The timezone table is built during static initialization: main() has not been entered yet,
+//there is normally a single thread and no fork() has happened. This is the only place where
+//getGMTOff() and getLocalTime() go through the (locking) timezone interfaces of libc; afterwards
+//both only look the table up, without a lock and without calling into libc, at the very moment
+//of a daylight saving switch as well. A call made before this initialization (while global
+//objects of other translation units are being constructed) gets the UTC placeholder of the table
 static onceToken s_token([]() {
-#ifdef _WIN32
-    TIME_ZONE_INFORMATION tzinfo;
-    DWORD dwStandardDaylight;
-    long bias;
-    dwStandardDaylight = GetTimeZoneInformation(&tzinfo);
-    bias = tzinfo.Bias;
-    if (dwStandardDaylight == TIME_ZONE_ID_STANDARD) {
-        bias += tzinfo.StandardBias;
-    }
-    if (dwStandardDaylight == TIME_ZONE_ID_DAYLIGHT) {
-        bias += tzinfo.DaylightBias;
-    }
-    s_gmtoff = -bias * 60; //时间差(分钟)
-#else
     local_time_init();
-    s_gmtoff = getLocalTime(time(nullptr)).tm_gmtoff;
-#endif // _WIN32
 });
 
 long getGMTOff() {
-    return s_gmtoff;
+    return get_local_gmtoff(::time(nullptr));
 }
 
 static inline uint64_t getCurrentMicrosecondOrigin() {
@@ -511,11 +504,7 @@ string getTimeStr(const char *fmt, time_t time) {
 
 struct tm getLocalTime(time_t sec) {
     struct tm tm;
-#ifdef _WIN32
-    localtime_s(&tm, &sec);
-#else
     no_locks_localtime(&tm, sec);
-#endif //_WIN32
     return tm;
 }
 
